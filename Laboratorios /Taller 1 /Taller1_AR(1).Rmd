@@ -1,0 +1,304 @@
+---
+title: "Taller 1 - Simulación y autocorrelaciones para un proceso AR(1)"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Marzo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(forecast)
+library(gridExtra)
+
+# Fijamos una semilla
+set.seed(123)
+
+```
+
+# Simulación de un procesos AR(1)
+
+Para simular un proceso autorregresivo de orden 1, alcanza con definir un valor inicial, $y_0$, y simular una serie de Ruidos Blancos $\varepsilon_t$ con $t = 1,\ldots,T$. Se llega entonces a que $Y_1 = \phi Y_0 + \varepsilon_1$, $Y_2 = \phi Y_1 + \varepsilon_2$, y así sucesivamente.
+
+```{r}
+
+# Sea un valor inicial nulo: y_0 = 0
+# Simulamos una serie de Ruidos Blancos con media 0 y desvío 1
+epsilon <- ts(rnorm(1500, 0, 1))
+
+# Simulamos un proceso autorregresivo con phi = 0,8
+phi <- 0.8
+y <- rep(0, 1500)
+y[1] <- epsilon[1]
+for (t in 2:length(y)) {
+y[t] <- phi*y[t-1] + epsilon[t]}
+y <- ts(y)
+
+head(y)
+
+# Forma no "manual"
+# y <- arima.sim(list(ar = 0.8), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un AR(1) con coeficiente igual a 0,8.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(y) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+# Función de Autocorrelación
+
+## Autocorrelaciones teóricas
+
+Las autocorrelaciones teóricas de un proceso estocástico $Y_t$, $\rho_j, j = 1, 2, \ldots, k$, se calculan a partir de sus autocovarianzas, $\gamma_j$, (normalizadas mediante su varianza), de forma que:
+
+$$\rho_k = \frac{\gamma_k}{\gamma_0} = \frac{Cov(Y_t,Y_{t-k})}{Var(Y_t)}$$
+
+Un proceso AR(1) se define como:
+
+$$Y_t = \phi Y_{t-1} + \varepsilon_t \Rightarrow (1 - \phi L) Y_t = \varepsilon_t$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+Si el proceso es estacionario ($|\phi|<1$):
+
+$$Y_t = \frac{\varepsilon_t}{(1 - \phi L)}$$
+
+En este caso, se tiene que:
+
+$$E(Y_t) = E\bigg( \frac{\varepsilon_t}{(1 - \phi L)} \bigg) = 0 $$
+
+$$\gamma_0 = Var(Y_t) = E(Y_t^{2}) = E\bigg( \bigg( \sum_{t=1}^{\infty}\phi^j\varepsilon_{t-j}\bigg)^{2} \bigg)=E((\varepsilon_t + \phi\varepsilon_{t-1} + \phi^2\varepsilon_{t-2} + \ldots)(\varepsilon_t + \phi\varepsilon_{t-1} + \phi^2\varepsilon_{t-2} + \ldots))$$
+
+$$= E(\varepsilon_t^2) + \phi^2E(\varepsilon_{t-1}^2) + \phi^4E(\varepsilon_{t-2}^2) + \ldots = \sigma_\varepsilon^2 + \phi^2\sigma_\varepsilon^2 + \phi^4\sigma_\varepsilon^2 + \ldots = \sigma_\varepsilon^2(1 + \phi^2 + \phi^4 + \ldots) = \sigma_\varepsilon^2 \sum_{j=0}^{\infty} (\phi^2)^j = \sigma_\varepsilon^2\frac{1}{1 - \phi^2}$$
+
+$$\gamma_k = Cov(Y_t, Y_{t-k}) = E(Y_tY_{t-k}) = E\bigg(\bigg( \sum_{j=0}^{\infty}\varepsilon_{t-j}\bigg)\bigg( \sum_{j=0}^{\infty}\varepsilon_{t-k-j}\bigg)\bigg)$$
+
+$$= E((\varepsilon_t + \phi\varepsilon_{t-1} + \phi^2\varepsilon_{t-2} + \ldots)(\varepsilon_{t-k} + \phi\varepsilon_{t-k-1} + \phi^2\varepsilon_{t-k-2} + \ldots) =\phi^k E(\varepsilon_{t-k}^2) + \phi^{k+2} E(\varepsilon_{t-k-1}^2) + \ldots$$
+
+$$ = \phi^k\sigma_\varepsilon^2 + \phi^{k+2}\sigma_\varepsilon^2 + \ldots = \sigma_\varepsilon^2(\phi^k + \phi^{k+2} + \ldots) = \sigma_\varepsilon^2\phi^k (1 + \phi^2 + \ldots) = \sigma_\varepsilon^2 \phi^k\sum_{j=0}^{\infty} (\phi^2)^j = \sigma_\varepsilon^2\frac{\phi^k}{1 - \phi^2} = \phi^k\gamma_0$$
+
+De esta manera, para $k>0$, se obtiene que $\rho_k = \phi^k$.
+
+```{r}
+
+# Obtenemos la FAC teórica para los primero 20 rezagos
+lag_max <- 20
+phi <- 0.8
+rho_teorica <- rep(1, lag_max + 1)
+for (k in 2:length(rho_teorica)) {
+rho_teorica[k] <- phi^(k-1)}
+rho_teorica
+
+# Forma no "manual"
+# rho_teorica <- ARMAacf(ar = 0.8, lag.max = 20, pacf = FALSE)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación teórica de un AR(1) con coeficiente igual a 0,8.", fig.pos = 'H'}
+
+# Graficamos la Función de Autocorrelación teórica
+rho_teorica <- data.frame(rho = rho_teorica)
+
+ggplot(rho_teorica) +
+  geom_col(aes(x = 0:20, y = rho), width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación")
+
+```
+
+## Autocorrelaciones estimadas
+
+Las autocorrelaciones estimadas para una serie de tiempo concreta, $\hat{\rho_j}, j = 1, 2, \ldots, k$, se obtienen mediante las correspondientes autocorrelaciones muestrales:
+
+$$\hat{\rho}_k = \frac{\sum_{t=k+1}^{T}(y_t-\bar{y})(y_{t-k}-\bar{y})}{\sum_{t=1}^{T}(y_{t}-\bar{y})^2}$$
+
+```{r}
+
+# Obtenemos las autocorrelaciones estimadas para 20 rezagos
+
+lag_max <- 20 # Cantidad de rezagos
+rho_est <- rep(0, lag_max) # Vector donde almacenamos las autocorrelaciones
+suma_den <- sum((y-mean(y))^2) # Suma de Cuadrados Totales
+
+# Calculamos las autocorrelaciones estimadas
+for (k in 1:length(rho_est)) {
+  suma_num <- 0 # Obtenemos el numerador de la fórmula para cada rho
+  for (t in (k+1):length(y)) {
+    suma_num <- suma_num + sum((y[t]-mean(y))*(y[t-k]-mean(y)))
+  }
+  rho_est[k] <- suma_num/suma_den # Calculamos las autocorrelaciones
+  }
+rho_est <- c(1,rho_est) # Concatenamos un 1 correspondiente a rho_0
+rho_est
+
+# Forma no "manual"
+# rho_est <- acf(y, lag.max = 20, type = "correlation", plot = FALSE)
+# rho_est <- rho_est$acf
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación estimada de un AR(1) con coeficiente igual a 0,8.", fig.pos = 'H'}
+
+# Graficamos la Función de Autocorrelación estimada
+rho_est <- data.frame(rho = rho_est)
+
+ggplot(rho_est) +
+  geom_col(aes(x = 0:20, y = rho), width = 0.2, fill = "red") +
+  labs(x = "Rezago",
+       y = "Autocorrelación")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación teórica y estimada para 1500 observaciones de un proceso AR(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# Ordenamos los datos de la FAC para poder graficarlos
+ar1_acf <- data.frame(rezago = 0:20, "Teórica" = rho_teorica$rho, "Estimación" = rho_est$rho)
+ar1_acf <- ar1_acf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FAC teórica y estimada
+ggplot(ar1_acf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       fill = "FAC")
+
+```
+
+# Función de Autocorrelación Parcial
+
+Las autocorrelaciones parciales, $\alpha_k$, pueden interpretarse como el vínculo existente entre $t$ y $t-k$, una vez "depuradas" todas las autocorrelaciones intermedias. Equivalen al $k$-ésimo coeficiente en una regresión lineal de $Y_t$ sobre los primeros $k$ rezagos. De esta manera, sea el modelo lineal:
+
+$$Y_t = \phi_{k1} Y_{t-1} + \phi_{k2} Y_{t-2} + \ldots + \phi_{kk} Y_{t-k} + \varepsilon_t$$
+La autocorrelación parcial de orden $k$ será $$\alpha_k = \phi_{kk}$$. En el caso de un AR(1), $\alpha_1$ será igual a $\phi$.
+
+```{r}
+
+# Para un AR(1) con phi = 0,8, alpha_1 = 0.8
+lag_max <- 20 # Cantidad de rezagos
+alpha_teorica <- rep(0, lag_max) # Vector donde almacenamos las autocorrelaciones
+alpha_teorica[1] <- 0.8 # La FACP teórica valdrá cero para todos los rezagos excepto el primero
+
+# Forma no "manual"
+# alpha_teorica <- ARMAacf(ar = 0.8, lag.max = 20, pacf = TRUE)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación Parcial teórica de un AR(1) con coeficiente igual a 0,8.", fig.pos = 'H'}
+
+# Graficamos la FACP teórica
+alpha_teorica <- data.frame(alpha = alpha_teorica)
+
+ggplot(alpha_teorica) +
+  geom_col(aes(x = 1:20, y = alpha), width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación")
+
+```
+
+Para una serie de tiempo, la función de autocorrelación parcial equivaldrá a las estimaciones MCO de estos coeficientes.
+
+```{r}
+
+# Obtenemos las autocorrelaciones parciales estimadas para 20 rezagos
+
+lag_max <- 20 # Cantidad de rezagos
+
+# Generamos un dataframe con la serie y sus rezagos
+datos_y <- data.frame(y)
+
+for (i in 1:lag_max) {
+  datos_y <- cbind(datos_y, rep(NA, length(y)))
+  for (j in (i+1):length(y)) {
+    datos_y[j,i+1] <- datos_y[j-1,i]
+  }
+}
+
+# Cambiamos el nombre de las columnas
+colnames(datos_y) <- c("y", paste('lag', 1:lag_max, sep = "_"))
+
+# Nos quedamos sin las filas con NAs
+datos_y <- datos_y[lag_max + 1:nrow(datos_y),]
+
+# Verificamos que los datos hayan quedado bien
+head(datos_y)
+
+```
+
+```{r}
+
+# Creamos un vector donde almacenamos las autocorrelaciones
+alpha_est <- rep(0, lag_max)
+
+# Para cada autocorrelación parcial, utilizamos el conjunto de datos sin NAs y estimamos una regresión lineal sin constante con lm()
+for (i in 1:lag_max) {
+  alpha_est[i] <- lm(y ~ . - 1, data = datos_y[, 1:(i+1)])$coef[i]
+}
+
+# Corroboramos que las correlaciones hayan quedado bien calculadas
+head(alpha_est)
+
+# Forma no "manual"
+# alpha_est <- acf(y, lag.max = 20, type = "partial", plot = FALSE)
+# alpha_est <- alpha_est$acf
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación Parcial estimada de un AR(1) con coeficiente igual a 0,8.", fig.pos = 'H'}
+
+# Graficamos la FACP estimada
+alpha_est <- data.frame(alpha = alpha_est)
+
+ggplot(alpha_est) +
+  geom_col(aes(x = 1:20, y = alpha), width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación Parcial teórica y estimada para 1500 observaciones de un proceso AR(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# Ordenamos los datos de la FACP para poder graficarlos
+ar1_pacf <- data.frame(rezago = 1:20, "Teórica" = alpha_teorica$alpha, "Estimación" = alpha_est$alpha)
+ar1_pacf <- ar1_pacf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FACP teórica y estimada
+ggplot(ar1_pacf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       fill = "FACP")
+
+```

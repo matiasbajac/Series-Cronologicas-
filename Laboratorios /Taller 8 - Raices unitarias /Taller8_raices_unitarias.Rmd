@@ -1,0 +1,852 @@
+---
+title: "Taller 8 - Raíces unitarias"
+#subtitle: ""
+author: "Series Cronológicas 2024"
+date: "Junio 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), tidy = TRUE, fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(patchwork) # Para ordenar gráficos
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+library(TSA)
+library(tsoutliers)
+library(lubridate)
+# library(xts)
+library(urca) # Para hacer tests de raíces unitarias
+library(tseries) # Para hacer tests de raíces unitarias
+#install.packages("fUnitRoots")
+library(fUnitRoots)
+
+```
+
+# PIB anual
+
+## Datos
+
+```{r}
+library(here)
+# Cargamos los datos
+
+# Trabajamos con el PIB anual desde 1870
+pib <- read_xlsx(here("datos","PIB empalmado.xlsx",
+                 sheet = "Final"))
+                  %>% 
+  mutate(PIB = round(PIB,2))
+
+pib = PIB_empalmado
+
+pib = pib %>%  mutate(PIB = round(PIB,2))
+
+# Transformamos la serie a formato ts
+pib <- ts(pib[,2], start = 1870, end = 2023)
+frequency(pib)
+
+```
+
+## Serie original
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie
+autoplot(pib) +
+  labs(x = "Año",
+       y = "PIB (precios constantes)") +
+  theme(panel.grid.minor = element_blank())
+
+## el pib en general crece
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del PIB anual a precios constantes (1870-2023).", fig.pos = 'H'}
+
+# FAC
+# La serie no es estacionaria
+pib_acf <- ggAcf(pib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+## no se mete nunca en el IC, no sabemos si tiene una tendencia det o unitaria.
+
+# FACP
+pib_pacf <- ggAcf(pib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(pib_acf, pib_pacf)
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+```{r}
+
+# No es conveniente usar la función adf.test() ya que no podemos especificar si la regresión contiene constante y/o tendencia determinística (por defecto se utilizan ambas)
+adf.test(pib, k = 1) ## no esta buena 
+
+
+# Otra opción: ndiffs()
+ndiffs(pib, test = "adf", type = "trend") ## diferencia regulares que se necesita para la estacionariedad. 
+ndiffs(pib, test = "adf", type = "level")
+?ndiffs
+
+```
+
+#### Modelo con constante y tendencia
+
+
+$$\Delta_y= a_0+a_{2t} ...$$
+
+$$H0) \gamma=0 vs H1)\gamma<0$$
+
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+pib_ct <- ur.df(pib, type = 'trend', selectlags = "BIC")
+summary(pib_ct) ## dice cual es la reg que uso, la var diferneciada, tt es la tendencia
+## no hay que ver los t values 
+#Value of test-statistic is: -0.1605 6.0968 4.2679  se ve 
+#Critical values for test statistics:  se ve
+
+plot(pib_ct)
+
+## contante deterministica y tendencia (1) de las notas
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau3)
+# ni que gamma = a2 = 0 (estadístico phi3). ## No es estacionario y tengo raiz unitario no tiene tendencia deterministica , rechazo H0 (apuntes
+## las alternativas son ts ds 
+# Rechazamos gamma = a0 = a2 = 0 (estadístico phi2).
+# Esto sugiere que tenemos un proceso con raíz unitaria y drift.
+
+# Otra forma (sólo devuelve el valor de tau3)
+# adfTest(pib, type = "ct")
+## La especificaacion correcta seria sin tendencia deterministica
+
+
+```
+
+#### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+pib_c <- ur.df(pib, type = 'drift', selectlags = "BIC")
+summary(pib_c)
+plot(pib_c)
+## type drift le pone la constante
+## ya no tengo tt, tengo 1 rezago
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2)
+# y rechazamos que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria y drift.
+
+# Otra forma (sólo devuelve el valor de tau2)
+# adfTest(pib, type = "c")
+
+```
+
+## Serie en logaritmos
+
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos logaritmos a la serie para linealizar la tendencia
+lpib <- log(pib)
+
+# Volvemos a graficar la serie
+autoplot(lpib) +
+  labs(x = "Año",
+       y = "Ln(PIB)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del logaritmo del PIB anual a precios constantes (1870-2023).", fig.pos = 'H'}
+
+# FAC vemos que no caen, no se si es por la raiz unitaria o por la tendencia deterministica
+# La serie no es estacionaria
+lpib_acf <- ggAcf(lpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+lpib_pacf <- ggAcf(lpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(lpib_acf, lpib_pacf)
+
+
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante y tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+lpib_ct <- ur.df(lpib, type = 'trend', selectlags = "BIC")
+summary(lpib_ct)
+plot(lpib_ct) ## parece un ruido blanco esto (segundo grafico)
+
+## al 5% RHO 
+# Bajo esta especificación, rechazamos que gamma = 0 (estadístico tau3) y
+# que gamma = a0 = a2 = 0 (estadístico phi2).
+# No rechazamos gamma = a2 = 0 (estadístico phi3).
+# Podría tratarse de un proceso con una raíz unitaria y drift, aunque no es claro.
+
+## que pasa cuando tenes outliers, afecta tambien all test
+## no tiene una tendencia deterministica clara
+
+
+```
+
+#### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+lpib_c <- ur.df(lpib, type = 'drift', selectlags = "BIC")
+summary(lpib_c)
+plot(lpib_c)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2) y
+# rechazamos que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria y drift.
+
+
+```
+
+## Serie diferenciada
+
+```{r, fig.align = 'center', fig.cap = "Primera diferencia regular del logaritmo del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos la primera diferencia al logaritmo de la serie
+dpib <- diff(lpib)
+
+# Volvemos a graficar la serie
+autoplot(dpib) +
+  labs(x = "Año",
+       y = "PIB (primera diferencia)") +
+  theme(panel.grid.minor = element_blank())
+
+# podemos partir de la especificacion (2)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de de la primera diferencia del logaritmo del PIB anual a precios constantes (1870-2023).", fig.pos = 'H'}
+
+# FAC
+dpib_acf <- ggAcf(dpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dpib_pacf <- ggAcf(dpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dpib_acf, dpib_pacf)
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+dpib_c <- ur.df(dpib, type = 'drift', selectlags = "BIC")
+summary(dpib_c)
+
+# Bajo esta especificación, rechazamos que gamma = 0 (estadístico tau2) y
+# que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso estacionario.
+## rho , estoy en tha 2  , gamma menor que 0 y no tiene constante, cuando le hice la diferencia...
+## no rechazo porque el gamma no es 0, es estacionario y se mueve entorno a 0
+
+```
+
+# IPC anual
+
+## Datos
+
+```{r}
+
+# Cargamos los datos
+
+# Trabajamos con el IPC anual desde 1937
+ipc <- read_xls(here("datos", "IPC_historico.xls"),
+                sheet = "IPC anual") %>% 
+  filter(month(Fecha) == 12) # Nos quedamos con los valores a diciembre
+
+
+
+# Transformamos la serie a formato ts
+ipc <- ts(ipc[,2], start = 1937, end = 2022)
+str(ipc)
+frequency(ipc)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución del IPC anual entre 1937 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie
+autoplot(ipc) +
+  labs(x = "Año",
+       y = "IPC") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del IPC anual (1937-2023).", fig.pos = 'H'}
+
+# FAC
+# La serie no es estacionaria
+ipc_acf <- ggAcf(ipc, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+ipc_pacf <- ggAcf(ipc, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(ipc_acf, ipc_pacf)
+
+```
+
+## Serie original
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante y tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+ipc_ct <- ur.df(ipc, type = 'trend', selectlags = "BIC")
+summary(ipc_ct)
+plot(ipc_ct)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau3).
+# Rechazamos que gamma = a0 = a2 = 0 (estadístico phi2) y
+# que gamma = a2 = 0 (estadístico phi3).
+# Podría tratarse de un proceso con drift.
+
+```
+
+#### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+ipc_c <- ur.df(ipc, type = 'drift', selectlags = "BIC")
+summary(ipc_c)
+plot(ipc_c)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2) y
+# rechazamos que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria y drift.
+
+```
+
+## Serie en logaritmos
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo IPC anual entre 1937 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos logaritmos a la serie para linealizar la tendencia
+lipc <- log(ipc)
+
+# Volvemos a graficar la serie
+autoplot(lipc) +
+  labs(x = "Año",
+       y = "Ln(IPC)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del logaritmo IPC anual (1937-2023).", fig.pos = 'H'}
+
+# FAC
+# La serie no es estacionaria
+lipc_acf <- ggAcf(lipc, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+lipc_pacf <- ggAcf(lipc, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(lipc_acf, lipc_pacf)
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante y tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+lipc_ct <- ur.df(lipc, type = 'trend', selectlags = "BIC")
+summary(lipc_ct)
+plot(lipc_ct)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau3).
+# No rechazamos que gamma = a0 = a2 = 0 (estadístico phi2) ni
+# que gamma = a2 = 0 (estadístico phi3).
+# Podría tratarse de un proceso con drift.
+
+```
+
+#### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+lipc_c <- ur.df(lipc, type = 'drift', selectlags = "BIC")
+summary(lipc_c)
+plot(lipc_c)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2) ni
+# que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria.
+
+```
+
+#### Modelo sin constante ni tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+lipc_n <- ur.df(lipc, type = 'none', selectlags = "BIC")
+summary(lipc_n)
+plot(lipc_n)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau1).
+# Concluimos que se trata de un proceso con una raíz unitaria.
+
+```
+
+## Serie diferenciada
+
+### Gráfico y autocorrelogramas
+
+```{r, fig.align = 'center', fig.cap = "Primera diferencia regular del logaritmo del IPC anual entre 1937 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos la primera diferencia al logaritmo de la serie
+dipc <- diff(lipc)
+
+# Volvemos a graficar la serie
+autoplot(dipc) +
+  labs(x = "Año",
+       y = "IPC (primera diferencia)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de de la primera diferencia del logaritmo del IPC anual (1937-2023).", fig.pos = 'H'}
+
+# FAC
+dipc_acf <- ggAcf(dipc, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dipc_pacf <- ggAcf(dipc, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dipc_acf, dipc_pacf)
+
+```
+
+### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+dipc_c <- ur.df(dipc, type = 'drift', selectlags = "BIC")
+summary(dipc_c)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2)
+# ni que gamma = a0 = 0 (estadístico phi1).
+# Esto sugiere que existe una raíz unitaria sin drift (no hay crecimiento).
+
+```
+
+### Modelo sin constante y sin tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+dipc_n <- ur.df(dipc, type = 'none', selectlags = "BIC")
+summary(dipc_n)
+plot(dipc_n)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau1).
+# Concluimos que se trata de un proceso con una raíz unitaria sin drift.
+
+```
+
+## Serie diferenciada dos veces
+
+### Gráfico y autocorrelogramas
+
+```{r, fig.align = 'center', fig.cap = "Segunda diferencia regular del logaritmo del IPC anual entre 1937 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos la primera diferencia al logaritmo de la serie
+ddipc <- diff(lipc, differences = 2)
+
+# Volvemos a graficar la serie
+autoplot(ddipc) +
+  labs(x = "Año",
+       y = "IPC (segunda diferencia)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de de la segunda diferencia del logartimo IPC anual (1937-2023).", fig.pos = 'H'}
+
+# FAC
+ddipc_acf <- ggAcf(ddipc, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+ddipc_pacf <- ggAcf(ddipc, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(ddipc_acf, ddipc_pacf)
+
+```
+
+### Modelo con constante
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+ddipc_c <- ur.df(ddipc, type = 'drift', selectlags = "BIC")
+summary(ddipc_c)
+plot(ddipc_c)
+
+# Bajo esta especificación, rechazamos que gamma = 0 (estadístico tau2)
+# y que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que la serie es estacionaria.
+
+```
+
+### Modelo sin constante ni tendencia
+
+```{r}
+
+# BIC - criterio para seleccionar la cantidad de rezagos
+ddipc_n <- ur.df(ddipc, type = 'none', selectlags = "BIC")
+summary(ddipc_n)
+plot(ddipc_n)
+
+# Bajo esta especificación, rechazamos que gamma = 0 (estadístico tau1).
+# Concluimos que la serie diferenciada dos veces es estacionaria.
+
+```
+
+# PIB trimestral
+
+## Datos
+
+```{r, message = FALSE, warning = FALSE}
+
+# Cargamos los datos
+
+# Serie de PIB trimestral (IVF, 2016 = 100)
+pib_turismo <- read_xlsx(here("Taller7_estacionalidad",
+                              "IVF_PIB_1990_2023.xlsx")) %>% 
+  rename("Fecha" = `...1`,
+         "PIB" = IVF_PIB_UY_T) %>% 
+  select(Fecha, PIB, Turismo)
+
+pib_trimestral <- ts(pib_turismo$PIB,
+                     start = c(1990,1),
+                     end = c(2023, 4),
+                     frequency = 4)
+
+```
+
+## Serie original
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB trimestral (Índice de Volumen Físico) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie
+autoplot(pib_trimestral) +
+  labs(x = "Año",
+       y = "PIB (IVF)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante y tendencia
+
+```{r}
+
+# Seleccionamos la cantidad de rezagos significativos
+
+# 1 lag ## 1 rezago
+pib_trimestral_ct_1 <- ur.df(pib_trimestral, type = 'trend', lags = 1)
+summary(pib_trimestral_ct_1)
+plot(pib_trimestral_ct_1) ## quedo toda la estac metida adentro
+
+# 2 lags, ## todavia no logra captar 
+pib_trimestral_ct_2 <- ur.df(pib_trimestral, type = 'trend', lags = 2)
+summary(pib_trimestral_ct_2)
+plot(pib_trimestral_ct_2)
+
+# 3 lags
+pib_trimestral_ct_3 <- ur.df(pib_trimestral, type = 'trend', lags = 3)
+summary(pib_trimestral_ct_3)
+plot(pib_trimestral_ct_3)
+
+## con serie con estacionariedad, como la serie es trimestral, le pongo 4 rezagos. 
+
+## veo q no me alcanza xq los residuos tienen que ser RB, queda mas limpito el FAC 
+
+## el ultimo rezago tiene que ser significativo (me fijo en el p valor del summary)
+
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau3)
+# ni que gamma = a2 = 0 (estadístico phi3).
+# Rechazamos gamma = a0 = a2 = 0 (estadístico phi2).
+
+
+
+# Esto sugiere que tenemos un proceso con raíz unitaria y drift.
+
+## raiz unitaria con drift 
+## como rexhazo los tau, no tengo tendencia deterministica ni constante (3)
+```
+
+#### Modelo con constante
+
+```{r}
+
+# Seleccionamos la cantidad de rezagos significativos
+
+# 1 lag
+pib_trimestral_c_1 <- ur.df(pib_trimestral, type = 'drift', lags = 1)
+summary(pib_trimestral_c_1)
+plot(pib_trimestral_c_1)
+
+# 2 lags
+pib_trimestral_c_2 <- ur.df(pib_trimestral, type = 'drift', lags = 2)
+summary(pib_trimestral_c_2)
+plot(pib_trimestral_c_2)
+
+# 3 lags
+pib_trimestral_c_3 <- ur.df(pib_trimestral, type = 'drift', lags = 3)
+summary(pib_trimestral_c_3)
+plot(pib_trimestral_c_3)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2)
+# y rechazamos que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria y drift.
+## no rexhazo ho)  tiene raiz unitaria, no tiene sentido que no tenga constante
+
+```
+
+## Serie en logaritmos
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo del PIB trimestral a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos logaritmos a la serie para linealizar la tendencia
+lpib_trimestral <- log(pib_trimestral)
+
+# Volvemos a graficar la serie
+autoplot(lpib_trimestral) +
+  labs(x = "Año",
+       y = "Ln(PIB)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del logaritmo del PIB trimestral a precios constantes (1870-2023).", fig.pos = 'H'}
+
+# FAC
+# La serie no es estacionaria
+lpib_trimestral_acf <- ggAcf(lpib_trimestral, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+lpib_trimestral_pacf <- ggAcf(lpib_trimestral, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(lpib_trimestral_acf, lpib_trimestral_pacf)
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante y tendencia
+
+```{r}
+
+# Seleccionamos la cantidad de rezagos significativos
+
+# 1 lag
+lpib_trimestral_ct_1 <- ur.df(lpib_trimestral, type = 'trend', lags = 1)
+summary(lpib_trimestral_ct_1)
+plot(lpib_trimestral_ct_1)
+
+# 2 lags
+lpib_trimestral_ct_2 <- ur.df(lpib_trimestral, type = 'trend', lags = 2)
+summary(lpib_trimestral_ct_2)
+plot(lpib_trimestral_ct_2)
+
+# 3 lags
+lpib_trimestral_ct_3 <- ur.df(lpib_trimestral, type = 'trend', lags = 3)
+summary(lpib_trimestral_ct_3)
+plot(lpib_trimestral_ct_3)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau3)
+# ni que gamma = a2 = 0 (estadístico phi3).
+# Rechazamos gamma = a0 = a2 = 0 (estadístico phi2).
+# Esto sugiere que tenemos un proceso con raíz unitaria y drift.
+
+```
+
+#### Modelo con constante
+
+```{r}
+
+# Seleccionamos la cantidad de rezagos significativos
+
+# 1 lag
+lpib_trimestral_c_1 <- ur.df(lpib_trimestral, type = 'drift', lags = 1)
+summary(lpib_trimestral_c_1)
+plot(lpib_trimestral_c_1)
+
+# 2 lags
+lpib_trimestral_c_2 <- ur.df(lpib_trimestral, type = 'drift', lags = 2)
+summary(lpib_trimestral_c_2)
+plot(lpib_trimestral_c_2)
+
+# 3 lags
+lpib_trimestral_c_3 <- ur.df(lpib_trimestral, type = 'drift', lags = 3)
+summary(lpib_trimestral_c_3)
+plot(lpib_trimestral_c_3)
+
+# Bajo esta especificación, no rechazamos que gamma = 0 (estadístico tau2)
+# y rechazamos que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso con una raíz unitaria y drift.
+
+```
+
+## Serie diferenciada
+
+```{r, fig.align = 'center', fig.cap = "Primera diferencia regular del logaritmo del PIB trimestral a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos la primera diferencia al logaritmo de la serie
+dpib_trimestral <- diff(lpib_trimestral)
+
+# Volvemos a graficar la serie
+autoplot(dpib_trimestral) +
+  labs(x = "Año",
+       y = "PIB (primera diferencia)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de de la primera diferencia del logaritmo del PIB trimestral a precios constantes (1870-2023).", fig.pos = 'H'}
+
+# FAC
+dpib_trimestral_acf <- ggAcf(dpib_trimestral, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dpib_trimestral_pacf <- ggAcf(dpib_trimestral, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dpib_trimestral_acf, dpib_trimestral_pacf)
+
+```
+
+### Test de Dickey-Fuller Aumentado
+
+#### Modelo con constante
+
+```{r}
+
+# Seleccionamos la cantidad de rezagos significativos
+
+# 1 lag
+dpib_trimestral_c_1 <- ur.df(dpib_trimestral, type = 'drift', lags = 1)
+summary(dpib_trimestral_c_1)
+plot(dpib_trimestral_c_1)
+
+# 2 lags
+dpib_trimestral_c_2 <- ur.df(dpib_trimestral, type = 'drift', lags = 2)
+summary(dpib_trimestral_c_2)
+plot(dpib_trimestral_c_2)
+
+# Bajo esta especificación, rechazamos que gamma = 0 (estadístico tau2)
+# y que gamma = a0 = 0 (estadístico phi1).
+# Concluimos que se trata de un proceso sin raíces unitarias regulares.
+
+```

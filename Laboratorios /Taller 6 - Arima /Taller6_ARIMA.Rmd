@@ -1,0 +1,356 @@
+---
+title: "Taller 6 - ARIMA con datos atípicos"
+#subtitle: ""
+author: "Series Cronológicas 2024"
+date: "Junio 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), tidy = TRUE, fig.pos = 'H', out.extra = '',warning = FALSE,message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(patchwork) # Para ordenar gráficos
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+#install.packages("TSA")
+library(TSA)
+install.packages("tsoul")
+library(tsoutliers)
+
+```
+
+```{r}
+
+# Cargamos los datos
+here()
+pib <- read_xlsx(here("datos", "PIB empalmado.xlsx"),
+                 sheet = "Final",
+                 skip = 0) %>% 
+  mutate(PIB = round(PIB, 2))
+
+# Transformamos la serie a formato ts
+pib <- ts(pib[,2], start = 1870, end = 2023)
+frequency(pib)
+
+```
+
+# Exploración de los datos
+
+```{r}
+
+# Máximo valor observado y fecha en la que ocurrió
+max(pib)
+time(pib)[which.max(pib)]
+
+# Mínimo valor observado y fecha en la que ocurrió
+min(pib)
+time(pib)[which.min(pib)]
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie
+autoplot(pib) +
+  labs(x = "Año",
+       y = "PIB (precios constantes)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+# Identificación del modelo
+
+
+## Serie original
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del PIB anual a precios constantes (1870-2023).", fig.pos = 'H'}
+## que modelo puede funcionar, veo que no es estacionaria 
+# FAC
+# La serie no es estacionaria
+pib_acf <- ggAcf(pib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pib_pacf <- ggAcf(pib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(pib_acf, pib_pacf)
+
+```
+Como no es estacionaria, le aplicamos la primera diferencia 
+## Serie en logaritmos
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos logaritmos a la serie para linealizar la tendencia
+lpib <- log(pib)
+
+# Volvemos a graficar la serie
+autoplot(lpib) +
+  labs(x = "Año",
+       y = "Ln(PIB)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+## Serie diferenciada
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo del PIB anual a precios constantes entre 1870 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Suponemos que la serie tiene una raíz unitaria y no una tendencia determinística (habría que testear la existencia de raíces unitarias)
+
+# Diferenciamos la serie en logaritmos (primera diferencia)
+dpib <- diff(log(pib))
+
+# Volvemos a graficar la serie
+autoplot(dpib) +
+  labs(x = "Año",
+       y = "Primera diferencia de Ln(PIB)") +
+  theme(panel.grid.minor = element_blank())
+
+```
+La mserie tiene cierta regularidad pero no tiene crecienmiento, queda al rededor del 0. 
+Se logra el objetivo, de que la serie sea estacionario, si bien en el grafico se ve que no hay crecimiento.
+Vemos la estacionariedad en el FAC Y FACP
+Parece ser estacionaria.
+Hay algunas correlaciones, las que salen del IC (como el 16), no tiene sentido prestable atencion. 
+en el correlograma parial en el 7 tambien pasa algo.
+Hay outliers que afectan la estimacion 
+
+Del 50 para atras o para adelante puede ser el corte para analizar. 
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia del logaritmo del PIB anual a precios constantes (1870-2023).", fig.pos = 'H'}
+
+
+# FAC
+# La serie no es estacionaria
+dpib_acf <- ggAcf(dpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dpib_pacf <- ggAcf(dpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dpib_acf, dpib_pacf)
+
+```
+
+```{r}
+
+modelo2 <- Arima(y = dpib,
+order = c(1, 1, 1),
+lambda =0, ## trabajamos con la serie en logaritmo 
+method="ML",biasadj=TRUE, include.constant = TRUE) # INCLUIMOS LA CTE 
+
+coeftest(modelo2)
+
+## que pasa si le sacamos la constante?
+
+
+
+modelo2.0 <- Arima(y = dpib,
+order = c(1, 1, 1),
+lambda =0, ## trabajamos con la serie en logaritmo 
+method="ML",biasadj=TRUE) 
+coeftest(modelo2.0)
+
+
+
+
+modelo3.0 <- Arima(y = dpib,
+order = c(0, 1, 1),
+lambda =0, ## trabajamos con la serie en logaritmo 
+method="ML") 
+coeftest(modelo3.0)
+
+?Arima
+
+## ver la etapa del diagnostico, autocorrelograma de los residuos.
+
+
+#el probmela es que el coeficiente del MA y AR es aprox 1 
+#esta sobre parametrizando, 
+
+```
+
+$$(1-L)(1-\phi L)LnY_t=(1+\theta L)\epsilon_t +c$$
+se va el primero y el segundo termino de la seguenda igualdad 
+
+
+
+una alternativa del modelo es $$\delta Y_t=c + \epsilon_t$$
+el delta es la variacion (diferencia)
+
+
+
+
+
+hacer graficos de los residuos 
+
+
+
+```{r}
+residuos = modelo3.0$residuals
+
+
+
+
+residuos %>% autoplot() + labs(x = "Fecha",
+y = "Residuos") + geom_hline(yintercept = 0, color = "red")
+
+
+
+## residuos estandarizados 
+
+
+residuos2_est <- residuos/sqrt(modelo3.0$sigma2)
+residuos %>% autoplot() +
+labs(x = "Fecha",
+y = "Residuos estandarizados", title = "PIB comercio") +
+geom_hline(yintercept = 0, color = "black") + geom_hline(yintercept = 3, color = "red", linetype = "dotted") + geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+```
+
+Volvemos al proceso de ver los residuos 
+```{r}
+
+```
+
+
+
+
+```{r}
+## agremos un A0 en 1872
+AO1872=rep(0,length(pib))
+#A01872[which.max(abs(res)]
+```
+ Siempre me pregunta son outliers estan correlacionados, se cumple el supeusto de normalidad de los residuos?
+ siempre veo los residuos.
+ 
+
+
+```{r}
+ggplot(data = residuos) +
+geom_histogram(aes(x = residuos, y = ..density..)) + stat_function(fun = dnorm,
+args = list(mean = mean(residuos), sd = sd(residuos)),
+col = "red",
+size = 1) + labs(x = "Residuos",
+       y = "Densidad") 
+
+
+```
+```{r}
+
+shapiro.test(residuos)
+
+```
+
+
+
+
+
+
+Modelo intervenido 
+
+(0,1,1)Ln . AO1888,LS1872 \rightarrow \hat{\sigma_{\epsilon}}^2 = 0.0042
+(0,1,1)Ln A01888,A01872 \rightarrow \gamma^2 = o.0043
+
+
+
+```{r}
+AO1872=rep(0,length(pib))
+A01888= rep(0,length(pib))
+
+pib
+modelo3.1 <- Arima(y = pib,
+order = c(1, 1, 0),
+lambda =0,
+## trabajamos con la serie en logaritmo 
+method="ML")
+
+
+
+residuos = modelo3.1$residuals
+
+
+
+
+residuos %>% autoplot() + labs(x = "Fecha",
+y = "Residuos") + geom_hline(yintercept = 0, color = "red")
+
+```
+
+```{r}
+dpib_acf <- ggAcf(residuos, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dpib_pacf <- ggAcf(residuos, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+```
+
+```{r}
+ggplot(data = residuos) +
+geom_histogram(aes(x = residuos, y = ..density..)) + stat_function(fun = dnorm,
+args = list(mean = mean(residuos), sd = sd(residuos)),
+col = "red",
+size = 1) + labs(x = "Residuos",
+       y = "Densidad") 
+```
+
+## Modelo intervenido 
+
+```{r}
+## ver
+AO1872=rep(0,length(pib))
+A01888= rep(0,length(pib))
+modelo_int <- Arima(y = pib,
+order = c(1, 1, 0),
+xreg =cbind(AO1888,AO1872),
+lambda =0,
+## trabajamos con la serie en logaritmo 
+method="ML",
+)
+```
+
+
+
+
+cuando metes los outliers los desvios van bajando
+
+0.004 es lo que dio el sigma cuadrado intervenido A0 + LS 

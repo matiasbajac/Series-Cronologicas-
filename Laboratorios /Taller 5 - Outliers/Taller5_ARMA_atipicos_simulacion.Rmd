@@ -1,0 +1,1339 @@
+---
+title: "Taller 5 - simulación de datos atípicos"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Mayo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '',warning = FALSE,message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(patchwork) # Para ordenar gráficos
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+library(TSA)
+library(tsoutliers)
+# library(xts)
+
+# Fijamos una semilla para simular
+set.seed(12345)
+
+```
+
+# Introducción
+
+En este taller, se simula un modelo AR(2) y se introduce distintos tipos de *outliers* (aditivos, cambio transitorio y cambio de nivel) y se analiza su impacto en el proceso de modelización. La presencia de un dato atípico afectará la estimación del modelo y probablemente dejará de cumplirse el supuesto de normalidad de los residuos, con lo cual también la inferencia sobre los coeficientes y la capacidad predictiva del modelo se verán afectadas. Para remediar esta situación, será necesario intervenir el modelo mediante la inclusión de un regresor externo en la estimación del modelo.
+
+# Simulación e introducción de un dato atípico
+
+```{r}
+
+# Simulamos un proceso AR(2) con media 2 y desvío estándar 0,07
+# Todavía no introducimos el cambio de nivel
+phi_1 <-  -0.5
+phi_2 <- 0.4
+media <- 2
+desvio <- 0.07
+N <- 200
+
+yt <- arima.sim(n = N,
+                model = list(ar = c(phi_1, phi_2)),
+                mean = media,
+                sd = desvio)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso AR(2).", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie simulada, su FAC y su FACP
+grafico_yt <- autoplot(yt) +
+  labs(x = "Observación",
+       y = "Valor") +
+  theme(panel.grid.minor = element_blank())
+
+yt_acf <- ggAcf(yt, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+yt_pacf <- ggAcf(yt, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grafico_yt / (yt_acf + yt_pacf)
+
+```
+
+## Atípico aditivo (AO)
+
+Cuando se advierte un punto raro que afecta únicamente una observación de la serie, se está en presencia de un *outlier* de tipo AO. Sea $W_A$ el impacto asociado al punto raro, $I_t^h$ una variable externa que indica su ocurrencia en el momento h y $\Psi(L)\varepsilon_t$ un proceso estacionario, el proceso resultante $Z_t$ puede escribirse como:
+$$ Z_t = W_A I_t^h + \Psi(L)\varepsilon_t $$
+La variable $I_t^h$ vale uno en el momento h y cero en todos los demás:
+$$ 
+I_t = \left\{
+\begin{array}{ll}
+1 & \mathrm{si\ } t = h \\
+0 & \mathrm{en\ otro\ caso}
+\end{array}
+\right.
+$$
+
+```{r}
+
+# Introducimos un AO en la observación 100
+quiebre <- 100
+I <- rep(0, N)
+I[quiebre] <- 1
+zt_AO <- yt
+zt_AO <- 0.4 * I + yt
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Efecto de la introducción de un dato atípico AO en el proceso AR(2).", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie con un AO, su FAC y su FACP
+grafico_zt_AO <- autoplot(zt_AO, color = "red") +
+  labs(x = "Observación",
+       y = "Valor") +
+  theme(panel.grid.minor = element_blank()) +
+  autolayer(yt, color = "black")
+
+zt_AO_acf <- ggAcf(zt_AO, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+zt_AO_pacf <- ggAcf(zt_AO, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grafico_zt_AO / (zt_AO_acf + zt_AO_pacf)
+
+```
+
+## Cambio transitorio (TC)
+
+Los valores atípicos del tipo TC corresponden a cambios transitorios que tienen un impacto máximo al comienzo y luego se diluyen de forma exponencial a medida que transcurre el tiempo. Sea $W_{TC}$ el impacto asociado al punto raro, $I_t^h$ una variable externa que indica su ocurrencia a partir del momento h y $\Psi(L)\varepsilon_t$ un proceso estacionario, el proceso resultante $Z_t$ puede escribirse como:
+$$ Z_t = W_{TC} I_t^h + \Psi(L)\varepsilon_t $$
+La variable $I_t^h$ vale uno en el momento h, y luego decrece exponencialmente a una tasa $\delta$:
+$$ 
+I_t = \left\{
+\begin{array}{lll}
+\delta^{t-h} & \mathrm{si\ } t \geq h \\
+0 & \mathrm{en\ otro\ caso}
+\end{array}
+\right.
+$$
+
+```{r}
+
+# Introducimos un TC a partir de la observación 100
+quiebre <- 100
+zt_TC <- yt
+I <- rep(0, N)
+delta <- 0.7
+I[quiebre] <- 1
+for (i in (quiebre + 1):length(I)) {
+  I[i] <- delta * I[i - 1]
+}
+zt_TC <- 0.4 * I + yt
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Efecto de la introducción de un dato atípico TC en el proceso AR(2).", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie con un AO, su FAC y su FACP
+grafico_zt_TC <- autoplot(zt_TC, color = "red") +
+  labs(x = "Observación",
+       y = "Valor") +
+  theme(panel.grid.minor = element_blank()) +
+  autolayer(yt, color = "black")
+
+zt_TC_acf <- ggAcf(zt_TC, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+zt_TC_pacf <- ggAcf(zt_TC, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grafico_zt_TC / (zt_TC_acf + zt_TC_pacf)
+
+```
+
+## Cambio de nivel (LS)
+
+Cuando a partir de cierta observación se produce un cambio de nivel en la serie, se dice que hay un valor atípico del tipo LS. Sea $W_L$ el impacto asociado al punto raro, $S_t^h$ una variable externa que indica su ocurrencia a partir del momento h y $\Psi(L)\varepsilon_t$ un proceso estacionario, el proceso resultante $Z_t$ puede escribirse como:
+$$
+Z_t = W_L S_t^h + \Psi(L)\varepsilon_t
+$$
+La variable $S_t^h$ es de tipo "escalón". Así, si se supone que el cambio de nivel ocurre en el momento $h$, la variable indicatriz $S_t$ tendrá la forma:
+$$ 
+S_t = \left\{
+\begin{array}{ll}
+1 & \mathrm{si\ } t \ge h \\
+0 & \mathrm{en\ otro\ caso}
+\end{array}
+\right.
+$$
+
+A partir de esto, queda claro que la esperanza del proceso será diferente dependiendo de si se lo considera antes o después del cambio de nivel, por lo que el proceso dejará de ser estacionario. Se tiene, entonces:
+$$
+E(Z_t) = \left\{
+\begin{array}{ll}
+W_L & \mathrm{si\ } t \ge h \\
+0 & \mathrm{en\ otro\ caso}
+\end{array}
+\right.
+$$
+
+```{r}
+
+# Introducimos un LS a partir de la observación 100
+quiebre <- 100
+I <- rep(0, N)
+I[quiebre:N] <- 1
+zt_LS <- yt
+zt_LS <- 0.4 * I + yt
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Efecto de la introducción de un dato atípico LS en el proceso AR(2).", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie con un LS, su FAC y su FACP
+grafico_zt_LS <- autoplot(zt_LS, color = "red") +
+  labs(x = "Observación",
+       y = "Valor") +
+  theme(panel.grid.minor = element_blank()) +
+  autolayer(yt, color = "black")
+
+# Al introducir un cambio de nivel, el proceso deja de tener una media constante y se vuelve no estacionario
+zt_LS_acf <- ggAcf(zt_LS, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+zt_LS_pacf <- ggAcf(zt_LS, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grafico_zt_LS / (zt_LS_acf + zt_LS_pacf)
+
+```
+
+# Estimación y diagnóstico
+
+## Atípico aditivo (AO)
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_AO <- Arima(y = zt_AO,
+                   order = c(2, 0, 0),
+                   lambda = NULL)
+
+summary(modelo_AO)
+coefci(modelo_AO)
+coeftest(modelo_AO)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_AO <- modelo_AO$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_AO))
+which.max(abs(residuos_AO))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) para la serie simulada con un AO.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_AO %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_AO_est <- residuos_AO/sqrt(modelo_AO$sigma2)
+grafico_residuos_est <- residuos_AO_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) para la serie simulada con un AO.", fig.pos = 'H'}
+
+# FAC
+residuos_AO_acf <- ggAcf(residuos_AO, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_AO_pacf <- ggAcf(residuos_AO, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_AO_acf, residuos_AO_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_AO,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_AO,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_AO,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) para la serie simulada con un AO.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_AO, aes(sample = residuos_AO)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) para la serie simulada con un AO. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_AO) +
+  geom_histogram(aes(x = residuos_AO,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_AO),
+                            sd = sd(residuos_AO)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad dado que hay un outlier
+shapiro.test(residuos_AO)
+JarqueBera.test(residuos_AO)
+
+```
+
+## Cambio transitorio (TC)
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_TC <- Arima(y = zt_TC,
+                   order = c(2, 0, 0),
+                   lambda = NULL)
+
+summary(modelo_TC)
+coefci(modelo_TC)
+coeftest(modelo_TC)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_TC <- modelo_TC$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_TC))
+which.max(abs(residuos_TC))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) para la serie simulada con un TC.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_TC %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_TC_est <- residuos_TC/sqrt(modelo_TC$sigma2)
+grafico_residuos_est <- residuos_TC_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) para la serie simulada con un TC.", fig.pos = 'H'}
+
+# FAC
+residuos_TC_acf <- ggAcf(residuos_TC, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_TC_pacf <- ggAcf(residuos_TC, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_TC_acf, residuos_TC_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_TC,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_TC,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_TC,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) para la serie simulada con un TC.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_TC, aes(sample = residuos_TC)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) para la serie simulada. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_TC) +
+  geom_histogram(aes(x = residuos_TC,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_TC),
+                            sd = sd(residuos_TC)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad dado que hay un outlier
+shapiro.test(residuos_TC)
+JarqueBera.test(residuos_TC)
+
+```
+
+## Cambio de nivel (LS)
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_LS <- Arima(y = zt_LS,
+                   order = c(2, 0, 0),
+                   lambda = NULL)
+
+summary(modelo_LS)
+coefci(modelo_LS)
+coeftest(modelo_LS)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_LS <- modelo_LS$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_LS))
+which.max(abs(residuos_LS))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) para la serie simulada con un LS.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_LS %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_LS_est <- residuos_LS/sqrt(modelo_LS$sigma2)
+grafico_residuos_est <- residuos_LS_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) para la serie simulada con un LS.", fig.pos = 'H'}
+
+# FAC
+residuos_LS_acf <- ggAcf(residuos_LS, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_LS_pacf <- ggAcf(residuos_LS, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_LS_acf, residuos_LS_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_LS,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_LS,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_LS,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) para la serie simulada con un LS.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_LS, aes(sample = residuos_LS)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) para la serie simulada. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_LS) +
+  geom_histogram(aes(x = residuos_LS,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_LS),
+                            sd = sd(residuos_LS)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad dado que hay un outlier
+shapiro.test(residuos_LS)
+JarqueBera.test(residuos_LS)
+
+```
+
+# Reestimación y diagnóstico
+
+## Atípico aditivo (AO)
+
+```{r}
+
+# Probamos una función de detección automática de outliers
+auto_ao <- tso(zt_AO, tsmethod = "arima",
+               args.tsmethod = list(order = c(2, 0, 0),
+                                    seasonal = list(order = c(0, 0, 0))))
+auto_ao
+
+# Graficamos el efecto del outlier AO
+plot.tsoutliers(auto_ao)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg_AO <- outliers.effects(auto_ao$outliers, length(zt_AO))
+head(xreg_AO)
+
+```
+
+```{r}
+
+# Creamos la indicatriz para intervenir el modelo
+AO <- rep(0, length(zt_AO))
+AO[quiebre] <- 1
+AO
+
+```
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_AO2 <- Arima(y = zt_AO,
+                    order = c(2, 0, 0),
+                    lambda = NULL,
+                    xreg = AO)
+
+summary(modelo_AO2)
+coefci(modelo_AO2)
+coeftest(modelo_AO2)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_AO2 <- modelo_AO2$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_AO2))
+which.max(abs(residuos_AO2))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) intervenido para la serie simulada con un AO.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_AO2 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_AO2_est <- residuos_AO2/sqrt(modelo_AO2$sigma2)
+grafico_residuos_est <- residuos_AO2_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) intervenido para la serie simulada con un AO.", fig.pos = 'H'}
+
+# FAC
+residuos_AO2_acf <- ggAcf(residuos_AO2, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_AO2_pacf <- ggAcf(residuos_AO2, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_AO2_acf, residuos_AO2_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_AO2,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_AO2,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_AO2,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) intervenido para la serie simulada con un AO.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_AO2, aes(sample = residuos_AO2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) intervenido para la serie simulada con un AO. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_AO2) +
+  geom_histogram(aes(x = residuos_AO2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_AO2),
+                            sd = sd(residuos_AO2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# No se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos_AO2)
+JarqueBera.test(residuos_AO2)
+
+```
+
+## Cambio transitorio (TC)
+
+```{r}
+
+# Probamos una función de detección automática de outliers
+auto_tc <- tso(zt_TC, tsmethod = "arima",
+               args.tsmethod = list(order = c(2, 0, 0),
+                                    seasonal = list(order = c(0, 0, 0))))
+auto_tc
+
+# Graficamos el efecto del outlier TC
+plot.tsoutliers(auto_tc)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg_TC <- outliers.effects(auto_tc$outliers, length(zt_TC))
+head(xreg_TC)
+
+```
+
+```{r}
+
+# Creamos la indicatriz para intervenir el modelo
+TC <- rep(0, length(zt_TC))
+delta <- 0.7
+TC[quiebre] <- 1
+for (i in (quiebre + 1):length(TC)) {
+  TC[i] <- delta * TC[i - 1]
+}
+round(TC,2)
+
+```
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_TC2 <- Arima(y = zt_TC,
+                    order = c(2, 0, 0),
+                    lambda = NULL,
+                    xreg = TC)
+
+summary(modelo_TC2)
+coefci(modelo_TC2)
+coeftest(modelo_TC2)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_TC2 <- modelo_TC2$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_TC2))
+which.max(abs(residuos_TC2))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) intervenido para la serie simulada con un TC.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_TC2 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_TC2_est <- residuos_TC2/sqrt(modelo_TC2$sigma2)
+grafico_residuos_est <- residuos_TC2_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) intervenido para la serie simulada con un TC.", fig.pos = 'H'}
+
+# FAC
+residuos_TC2_acf <- ggAcf(residuos_TC2, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_TC2_pacf <- ggAcf(residuos_TC2, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_TC2_acf, residuos_TC2_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_TC2,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_TC2,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_TC2,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) intervenido para la serie simulada con un TC.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_TC2, aes(sample = residuos_TC2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) intervenido para la serie simulada con un TC. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_TC2) +
+  geom_histogram(aes(x = residuos_TC2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_TC2),
+                            sd = sd(residuos_TC2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# No se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos_TC2)
+JarqueBera.test(residuos_TC2)
+
+```
+
+## Cambio de nivel (LS)
+
+```{r}
+
+# Probamos una función de detección automática de outliers
+auto_ls <- tso(zt_LS, tsmethod = "arima",
+               args.tsmethod = list(order = c(2, 0, 0),
+                                    seasonal = list(order = c(0, 0, 0))))
+auto_ls
+
+# Graficamos el efecto del outlier LS
+plot.tsoutliers(auto_ls)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg_LS <- outliers.effects(auto_ls$outliers, length(zt_LS))
+head(xreg_LS)
+
+```
+
+```{r}
+
+# Creamos la indicatriz para intervenir el modelo
+LS <- rep(0, length(zt_LS))
+LS[quiebre:N] <- 1
+LS
+
+```
+
+```{r}
+
+# Estimamos un modelo AR(2)
+modelo_LS2 <- Arima(y = zt_LS,
+                    order = c(2, 0, 0),
+                    lambda = NULL,
+                    xreg = LS)
+
+summary(modelo_LS2)
+coefci(modelo_LS2)
+coeftest(modelo_LS2)
+
+```
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos_LS2 <- modelo_LS2$residuals
+
+# Buscamos el residuo máximo del modelo
+max(abs(residuos_LS2))
+which.max(abs(residuos_LS2))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) intervenido para la serie simulada con un LS.", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos_LS2 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+residuos_LS2_est <- residuos_LS2/sqrt(modelo_LS2$sigma2)
+grafico_residuos_est <- residuos_LS2_est %>% 
+  autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) intervenido para la serie simulada con un LS.", fig.pos = 'H'}
+
+# FAC
+residuos_LS2_acf <- ggAcf(residuos_LS2, lag.max = 50, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_LS2_pacf <- ggAcf(residuos_LS2, lag.max = 50, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_LS2_acf, residuos_LS2_pacf)
+
+```
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos_LS2,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_LS2,
+         lag = 30,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+Box.test(residuos_LS2,
+         lag = 50,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q
+
+```
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) intervenido para la serie simulada con un LS.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos_LS2, aes(sample = residuos_LS2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) intervenido para la serie simulada con un LS. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos_LS2) +
+  geom_histogram(aes(x = residuos_LS2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos_LS2),
+                            sd = sd(residuos_LS2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# No se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos_LS2)
+JarqueBera.test(residuos_LS2)
+
+```
+
+# Predicción
+
+## Atípico aditivo (AO)
+
+```{r}
+
+# Creamos una indicatriz para incluir en las predicciones (consideramos predicciones a 10 pasos)
+AO_pred <- rep(0, 10)
+AO_pred
+
+```
+
+```{r}
+
+# Obtenemos las predicciones (debemos incluir un regresor externo)
+predicciones_AO <- forecast(modelo_AO2, h = 10, xreg = AO_pred)
+predicciones_AO
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 10 pasos de un AR(2) con un AO. Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones mediante un fan chart
+predicciones_AO <- forecast(modelo_AO2, h = 10, xreg = AO_pred, fan = TRUE)
+autoplot(predicciones_AO) +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+## Cambio transitorio (TC)
+
+```{r}
+
+# Creamos una indicatriz para incluir en las predicciones (consideramos predicciones a 10 pasos)
+TC_pred <- rep(0, 10)
+deltaa <- 0.7
+TC_pred[1] <- TC[length(TC)]*delta
+for (i in 2:length(TC_pred)) {
+  TC_pred[i] <- TC_pred[i-1]*delta
+}
+TC_pred
+
+```
+
+```{r}
+
+# Obtenemos las predicciones (debemos incluir un regresor externo)
+predicciones_TC <- forecast(modelo_TC2, h = 10, xreg = TC_pred)
+predicciones_TC
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 10 pasos de un AR(2) con un TC. Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones mediante un fan chart
+predicciones_TC <- forecast(modelo_TC2, h = 10, xreg = TC_pred, fan = TRUE)
+autoplot(predicciones_TC) +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+## Cambio de nivel (LS)
+
+```{r}
+
+# Creamos una indicatriz para incluir en las predicciones (consideramos predicciones a 10 pasos)
+LS_pred <- rep(1, 10)
+LS_pred
+
+```
+
+```{r}
+
+# Obtenemos las predicciones (debemos incluir un regresor externo)
+predicciones_LS <- forecast(modelo_LS2, h = 10, xreg = LS_pred)
+predicciones_LS
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 10 pasos de un AR(2) con un LS. Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones mediante un fan chart
+predicciones_LS <- forecast(modelo_LS2, h = 10, xreg = LS_pred, fan = TRUE)
+autoplot(predicciones_LS) +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+# Validación de las predicciones
+
+## Atípico aditivo (AO)
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta la observación 150 inclusive
+train_AO <- window(zt_AO, end = 150)
+train_AO_reg <- AO[1:150]
+
+# Dejamos las observaciones 151-200 como conjunto de entrenamiento ("test set")
+test_AO <- window(zt_AO, start = 151)
+n_AO <- length(test_AO)
+
+```
+
+```{r}
+
+# Estimamos el modelo para el training set (incluimos una variable indicatriz)
+modeloAO_train <- Arima(y = train_AO,
+                        order = c(2, 0, 0),
+                        lambda = NULL,
+                        xreg = train_AO_reg)
+
+```
+
+```{r}
+
+# Creamos una variable indicatriz para predecir en el test set
+AO_test <- AO[151:N]
+AO_test
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción será igual al largo del test set)
+pred_test_AO <- forecast(modeloAO_train, h = n_AO, xreg = AO_test)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba un modelo AR(2) con un AO. La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+autoplot(pred_test_AO) +
+  autolayer(zt_AO, color = "black") +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+```{r}
+
+# Obtenemos los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al verdadero valor de la serie (conjunto de prueba)
+accuracy(pred_test_AO, test_AO)
+
+```
+
+## Cambio transitorio (TC)
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta la observación 150 inclusive
+train_TC <- window(zt_TC, end = 150)
+train_TC_reg <- TC[1:150]
+round(train_TC_reg, 2)
+
+# Dejamos las observaciones 151-200 como conjunto de entrenamiento ("test set")
+test_TC <- window(zt_TC, start = 151)
+n_TC <- length(test_TC)
+
+```
+
+```{r}
+
+# Estimamos el modelo para el training set (incluimos una variable indicatriz)
+modeloTC_train <- Arima(y = train_TC,
+                        order = c(2, 0, 0),
+                        lambda = NULL,
+                        xreg = train_TC_reg)
+
+```
+
+```{r}
+
+# Creamos una variable indicatriz para predecir en el test set
+TC_test <- TC[151:N]
+round(TC_test, 2)
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción será igual al largo del test set)
+pred_test_TC <- forecast(modeloTC_train, h = n_TC, xreg = TC_test)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba un modelo AR(2) con un TC. La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+autoplot(pred_test_TC) +
+  autolayer(zt_TC, color = "black") +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+```{r}
+
+# Obtenemos los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al verdadero valor de la serie (conjunto de prueba)
+accuracy(pred_test_TC, test_TC)
+
+```
+
+## Cambio de nivel (LS)
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta la observación 150 inclusive
+train_LS <- window(zt_LS, end = 150)
+train_LS_reg <- LS[1:150]
+
+# Dejamos las observaciones 151-200 como conjunto de entrenamiento ("test set")
+test_LS <- window(zt_LS, start = 151)
+n_LS <- length(test_LS)
+
+```
+
+```{r}
+
+# Estimamos el modelo para el training set (incluimos una variable indicatriz)
+modeloLS_train <- Arima(y = train_LS,
+                        order = c(2, 0, 0),
+                        lambda = NULL,
+                        xreg = train_LS_reg)
+
+```
+
+```{r}
+
+# Creamos una variable indicatriz para predecir en el test set
+LS_test <- LS[151:N]
+LS_test
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción será igual al largo del test set)
+pred_test_LS <- forecast(modeloLS_train, h = n_LS, xreg = LS_test)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba un modelo AR(2) con un LS. La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+autoplot(pred_test_LS) +
+  autolayer(zt_LS, color = "black") +
+  labs(x = "Fecha",
+       y = "Valor",
+       title = "")
+
+```
+
+```{r}
+
+# Obtenemos los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al verdadero valor de la serie (conjunto de prueba)
+accuracy(pred_test_LS, test_LS)
+
+```

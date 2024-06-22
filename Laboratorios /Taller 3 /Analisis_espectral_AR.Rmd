@@ -1,0 +1,334 @@
+---
+title: "Análisis espectral - Procesos AR(1)"
+#subtitle: ""
+author: "Series Cronológicas 2024"
+date: "Abril 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(forecast)
+library(TSA)
+library(gridExtra)
+
+# Fijamos una semilla
+set.seed(123)
+
+```
+
+```{r, echo = FALSE}
+
+# Definimos los parámetros de los modelos AR(1)
+phi1 <- 0.5
+phi2 <- 0.9
+phi3 <- -0.5
+phi4 <- -0.9
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Espectros teóricos de procesos AR(1) con coeficientes igual a 0,5 y 0,9 y -0,5 y -0,9.", fig.pos = 'H', warning = FALSE, message = FALSE, echo = FALSE}
+
+# Obtenemos los espectros teóricos
+
+espectro1 <- ARMAspec(model = list(ar = phi1),
+                      plot = FALSE,
+                      freq = seq(from = 0,
+                                 to = 0.5,
+                                 length.out = 500))
+
+espectro2 <- ARMAspec(model = list(ar = phi2),
+                      plot = FALSE,
+                      freq = seq(from = 0,
+                                 to = 0.5,
+                                 length.out = 500))
+
+espectro3 <- ARMAspec(model = list(ar = phi3),
+                      plot = FALSE,
+                      freq = seq(from = 0,
+                                 to = 0.5,
+                                 length.out = 500))
+
+espectro4 <- ARMAspec(model = list(ar = phi4),
+                      plot = FALSE,
+                      freq = seq(from = 0,
+                                 to = 0.5,
+                                 length.out = 500))
+
+# Guardamos los datos para poder graficar en ggplot()
+
+espectros <- data.frame(Frecuencia = espectro1$freq,
+                        Espectro1 = espectro1$spec,
+                        Espectro2 = espectro2$spec,
+                        Espectro3 = espectro3$spec,
+                        Espectro4 = espectro4$spec) %>% 
+  pivot_longer(cols = c(Espectro1,
+                        Espectro2,
+                        Espectro3,
+                        Espectro4),
+               names_to = "Phi",
+               values_to = "Valor") %>% 
+  mutate(Phi = recode(Phi,
+                      Espectro1 = "0.5",
+                      Espectro2 = "0.9",
+                      Espectro3 = "-0.5",
+                      Espectro4 = "-0.9")) %>% 
+  mutate(Phi = as_factor(Phi))
+
+# Graficamos los espectros 1-2 y 3-4
+
+grafico_teo1 <- espectros %>% 
+  filter(Phi == c(0.5, 0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1)
+
+grafico_teo2 <- espectros %>% 
+  filter(Phi == c(-0.5, -0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1)
+
+grid.arrange(grafico_teo1,
+             grafico_teo2,
+             ncol = 2)
+
+```
+
+```{r, echo = FALSE}
+
+# Simulamos 1000 observaciones de los procesos AR(1)
+
+ar1 <- arima.sim(model = list(ar = phi1), n = 1000)
+ar2 <- arima.sim(model = list(ar = phi2), n = 1000)
+ar3 <- arima.sim(model = list(ar = phi3), n = 1000)
+ar4 <- arima.sim(model = list(ar = phi4), n = 1000)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Periodogramas de procesos AR(1) con coeficientes igual a 0,5 y 0,9 y -0,5 y -0,9.", fig.pos = 'H', warning = FALSE, message = FALSE, echo = FALSE}
+
+# Obtenemos los periodogramas
+
+periodograma1 <- spectrum(ar1,
+                          plot = FALSE,
+                          log = "no",
+                          freq = seq(from = 0,
+                                     to = 0.5,
+                                     length.out = 500))
+
+periodograma2 <- spectrum(ar2,
+                          plot = FALSE,
+                          log = "no",
+                          freq = seq(from = 0,
+                                     to = 0.5,
+                                     length.out = 500))
+
+periodograma3 <- spectrum(ar3,
+                          plot = FALSE,
+                          log = "no",
+                          freq = seq(from = 0,
+                                     to = 0.5,
+                                     length.out = 500))
+
+periodograma4 <- spectrum(ar4,
+                          plot = FALSE,
+                          log = "no",
+                          freq = seq(from = 0,
+                                     to = 0.5,
+                                     length.out = 500))
+
+# Guardamos los datos para poder graficar en ggplot()
+
+periodogramas <- data.frame(Frecuencia = periodograma1$freq,
+                            Periodograma1 = periodograma1$spec,
+                            Periodograma2 = periodograma2$spec,
+                            Periodograma3 = periodograma3$spec,
+                            Periodograma4 = periodograma4$spec) %>% 
+  pivot_longer(cols = c(Periodograma1,
+                        Periodograma2,
+                        Periodograma3,
+                        Periodograma4),
+               names_to = "Phi",
+               values_to = "Valor") %>% 
+  mutate(Phi = recode(Phi,
+                      Periodograma1 = "0.5",
+                      Periodograma2 = "0.9",
+                      Periodograma3 = "-0.5",
+                      Periodograma4 = "-0.9")) %>% 
+  mutate(Phi = as_factor(Phi))
+
+# Graficamos los espectros 1-2 y 3-4
+
+grafico_est1 <- periodogramas %>% 
+  filter(Phi == c(0.5, 0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1) +
+  scale_y_continuous(limits = c(0, 500))
+
+grafico_est2 <- periodogramas %>% 
+  filter(Phi == c(-0.5, -0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1) +
+  scale_y_continuous(limits = c(0, 500))
+
+grid.arrange(grafico_est1,
+             grafico_est2,
+             ncol = 2)
+
+```
+
+
+```{r, fig.align = 'center', fig.cap = "Periodogramas suavizados de procesos AR(1) con coeficientes igual a 0,5 y 0,9 y -0,5 y -0,9.", fig.pos = 'H', warning = FALSE, message = FALSE, echo = FALSE}
+
+# Obtenemos los periodogramas suavizados
+
+periodograma_suav1 <- spectrum(ar1,
+                               plot = FALSE,
+                               log = "no",
+                               spans = 50,
+                               freq = seq(from = 0,
+                                          to = 0.5,
+                                          length.out = 500))
+
+periodograma_suav2 <- spectrum(ar2,
+                               plot = FALSE,
+                               log = "no",
+                               spans = 50,
+                               freq = seq(from = 0,
+                                          to = 0.5,
+                                          length.out = 500))
+
+periodograma_suav3 <- spectrum(ar3,
+                               plot = FALSE,
+                               log = "no",
+                               spans = 50,
+                               freq = seq(from = 0,
+                                          to = 0.5,
+                                          length.out = 500))
+
+periodograma_suav4 <- spectrum(ar4,
+                               plot = FALSE,
+                               log = "no",
+                               spans = 50,
+                               freq = seq(from = 0,
+                                          to = 0.5,
+                                          length.out = 500))
+
+# Guardamos los datos para poder graficar en ggplot()
+
+periodogramas_suav <- data.frame(Frecuencia = periodograma_suav1$freq,
+                                 Periodograma_suav1 = periodograma_suav1$spec,
+                                 Periodograma_suav2 = periodograma_suav2$spec,
+                                 Periodograma_suav3 = periodograma_suav3$spec,
+                                 Periodograma_suav4 = periodograma_suav4$spec) %>% 
+  pivot_longer(cols = c(Periodograma_suav1,
+                        Periodograma_suav2,
+                        Periodograma_suav3,
+                        Periodograma_suav4),
+               names_to = "Phi",
+               values_to = "Valor") %>% 
+  mutate(Phi = recode(Phi,
+                      Periodograma_suav1 = "0.5",
+                      Periodograma_suav2 = "0.9",
+                      Periodograma_suav3 = "-0.5",
+                      Periodograma_suav4 = "-0.9")) %>% 
+  mutate(Phi = as_factor(Phi))
+
+# Graficamos los espectros 1-2 y 3-4
+
+grafico_suav1 <- periodogramas_suav %>% 
+  filter(Phi == c(0.5, 0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1) +
+  scale_y_continuous(limits = c(0, 100))
+
+grafico_suav2 <- periodogramas_suav %>% 
+  filter(Phi == c(-0.5, -0.9)) %>% 
+  ggplot() +
+  geom_line(aes(x = Frecuencia,
+                y = Valor,
+                color = Phi)) +
+  labs(color = expression(phi)) +
+  theme(aspect.ratio = 1) +
+  scale_y_continuous(limits = c(0, 100))
+
+grid.arrange(grafico_suav1,
+             grafico_suav2,
+             ncol = 2)
+
+```
+
+```{r, eval = FALSE, echo = FALSE}
+
+# Para mostrar en clase
+
+# Dejamos las escalas todas iguales
+
+grafico_teo1 <- grafico_teo1 +
+  scale_y_continuous(limits = c(0, 500))
+
+grafico_teo2 <- grafico_teo2 +
+  scale_y_continuous(limits = c(0, 500))
+
+grafico_suav1 <- grafico_suav1 +
+  scale_y_continuous(limits = c(0, 500))
+
+grafico_suav2 <- grafico_suav2 +
+  scale_y_continuous(limits = c(0, 500))
+
+# Graficamos todo junto
+
+grid.arrange(grafico_teo1,
+             grafico_teo2,
+             grafico_est1,
+             grafico_est2,
+             grafico_suav1,
+             grafico_suav2,
+             ncol = 2)
+
+```
+
+

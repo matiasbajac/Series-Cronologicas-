@@ -1,0 +1,128 @@
+---
+title: "Taller 0 - Ejemplos adicionales"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Marzo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '',warning = FALSE,message = FALSE)
+
+```
+
+```{r}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(data.table)
+library(fable)
+library(zoo)
+library(tsibble)
+library(tsibbledata)
+
+```
+
+# Ejemplo - librería `zoo`
+
+```{r}
+
+# Creamos el vector con las fechas
+fechas <- seq(from = as.Date("2014-06-01"),
+              to = as.Date("2015-10-14"), by = 1)
+# Creamos un vector con la suma acumulada de normales simuladas más 0.2
+serie_norm <- 0.2 + cumsum(rnorm(length(fechas)))
+# Definimos a serie como un objeto de tipo zoo
+serie_norm <- zoo(x = serie_norm, order.by = fechas)
+class(serie_norm)
+
+```
+
+```{r, eval = FALSE}
+
+# Para obtener las fechas usamos la función time()
+time(serie_norm)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Serie simulada con rnorm.", fig.pos = 'H'}
+
+# Para graficar la serie podemos usar plot() o autoplot()
+autoplot(serie_norm) +
+  labs(x = "Fecha",
+       y = "Serie normal") +
+  scale_x_date(date_labels = "%m-%Y", # Cambiamos el formato de fecha
+               date_breaks = "2 month")
+
+```
+
+# Más ejemplos - librería `tsibble`
+
+```{r}
+
+# La librería tsibble contiene distintos distintos conjuntos de datos
+eco <- tsibbledata::global_economy
+class(eco)
+head(eco)
+
+# Pasamos los datos a formato dataframe
+eco <- as.data.frame(eco)
+class(eco)
+head(eco)
+
+# Reconvertimos los datos en un tibble
+eco <- tsibble(eco, key = Country, index = Year)
+class(eco)
+head(eco)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución de la población entre 1960 y 2017 por país.", fig.pos = 'H'}
+
+# Graficamos la serie con geom_line
+eco %>% 
+  filter(Country != "World") %>% # Quitamos totales mundiales
+  ggplot(aes(x = Year, y = Population, color = Country)) +
+    geom_line(show.legend = FALSE) +
+    labs(x = "Año",
+         y = "Población") +
+    scale_x_continuous(breaks = seq(1960, 2017, by = 5))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución de variables económicas entre 1960 y 2017 (totales mundiales).", fig.pos = 'H'}
+
+eco %>% 
+  pivot_longer(cols = c("Growth", "CPI", "Imports", "Exports", "Population", "GDP"),
+               values_to = "Valores") %>% 
+  filter(Country == "World",
+         Valores != "CPI") %>% 
+  ggplot(aes(x = Year, y = Valores, group = Country)) +
+  geom_line() +
+  facet_wrap(name ~ ., scales = "free_y",
+             labeller = as_labeller(c(Growth = "Crecimiento",
+                                      Imports = "Importaciones",
+                                      Exports = "Exportaciones",
+                                      Population = "Población",
+                                      GDP = "PIB"))) +
+  labs(x = "Año")
+
+```
+

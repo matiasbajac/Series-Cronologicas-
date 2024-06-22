@@ -1,0 +1,248 @@
+---
+title: "Taller 0 - Introducción"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Marzo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+En este taller, se introduce el lenguaje de programación de R y el entorno integrado de desarrollo, RStudio. Además, se presenta el formato de archivos *.Rmd*, que permite generar archivos autocontenidos de texto y código.
+
+# Directorios y proyectos
+
+Los archivos de datos se cargan en forma **condicional** a la ruta en la que se encuentran. Por lo tanto, es necesario conocer el directorio en el que se está trabajando. Para ello, se usa la función `getwd()`. Para cambiarlo, puede utilizarse `setwd()` o bien utilizar el menú de RStudio: `Session/Set working directory/Choose directory...`.
+
+```{r}
+
+# Obtenemos el directorio en el que estamos trabajando
+getwd()
+
+```
+
+Para facilitar el manejo de directorios y facilitar la reproducibilidad de los *scripts*, es recomendable trabajar con proyectos. Al abrir un proyecto de R, se fija el directorio en la carpeta en la que se encuentre el archivo *.Rproj*, independientemente del sistema operativo que se tenga (Linux, Windows, etc.).
+
+Para crear un nuevo proyecto desde el menú de opciones, se debe seleccionar la opción `New Project` dentro de `File`. Existen tres opciones:
+
+* **New Directory:** Permite crear un proyecto en una nueva carpeta.
+* **Existing Directory:** Crea el proyecto en una carpeta ya existente.
+* **Version Control:** Crea un proyecto asociado a Git y Github.
+
+Es recomendable que el nombre del proyecto no tenga **espacios** ni **caracteres especiales**.
+
+# Librerías
+
+Muchas de las funciones con las que se trabajará no se encuentran en el R base, sino que pertenecen a paquetes que deben ser instalados antes de ser utilizados por primera vez mediante la función `install.packages()`. Posteriormente, debe cargárselos cada vez que se los quiera usar con la función `library()`. También es posible utilizar únicamente una función sin cargar todo el paquete que la contiene mediante comandos de la forma `library::function(...)`.
+
+```{r}
+
+# Cargamos las librerías
+# Si tenemos que instalar paquetes, usamos install.packages("")
+
+library(tidyverse)
+library(here) # Para fijar el directorio
+library(data.table)
+
+# Para trabajar con series de tiempo
+library(fable)
+library(zoo)
+library(tsibble)
+library(tsibbledata)
+# tsibbledata::gafa_stock
+# tsibbledata::aus_livestock
+
+```
+
+# Archivos R Markdown
+
+Los *scripts* más básicos de R tienen extensión *.R*. En ellos, se escribe directamente el código y sus comentarios. Por su parte, los archivos R Markdown, de formato *.Rmd*, permiten integrar secciones de código y texto para luego compilarlo en diferentes formatos (pdf, html, docx, etc.). Esto permite generar un archivo autocontenido con todo el análisis realizado, lo cual contribuye a su reproducibilidad.
+
+Los archivos R Markdown se componen de diferentes partes:
+
+* **YAML:** Se encuentra al inicio del archivo y permite especificar distintos aspectos del archivo tales como el título, el autor, la fecha y el tipo de archivo de compilación, entre muchos otros.
+* **Chunks** Se trata de la sección especial en la que se encuentra el código. En cada *chunk*, pueden definirse distintos aspectos tales como si mostrar o no el código en el archivo compilado o si ejecutar o no el código.
+* **Texto:** Se ubica fuera de los *chunks* y funciona de manera muy similar a LaTex: las fórmulas se escriben de la misma manera, se pueden crear referencias cruzadas y agregar archivos *.bib* con la bibliografía, etc.
+
+# Lectura de datos
+
+En R, pueden importarse datos en una gran variedad de formatos como por ejemplo *.dta*, *.xlsx*, *.xls* y *.csv*. Por defecto, los datos rectangulares se cargan con la clase *data.frame*, aunque esto puede cambiarse dependiendo del tipo de información con la que se esté trabajando. Por ejemplo, los datos para mapas se guardan con una clase y formato diferente.
+
+Dependiendo del formato de los datos que se deseen importar, se deben utilizar distintas librerías:
+
+```{r, eval=FALSE}
+
+# Algunas funciones para cargar datos
+utils::read.table()
+data.table::fread()
+readr::read_csv()
+haven::read_dta()
+
+```
+
+Para facilitar el manejo de archivos dentro del directorio en el que se esté trabajando, es útil usar la función `here()`, la cual permite especificar su ubicación a la hora cargar los datos. Esta función utiliza la misma sintaxis sin importar el sistema operativo, lo que contribuye a la reproducibilidad del código.
+
+# Manipulación de datos
+
+Para manipular datos, pueden usarse únicamente las funciones de R base, o bien utilizarse librerías especializadas como `dplyr` como parte de `tidyverse`.
+
+Dentro de `tidyverse`, existe la librería `magrittr`, la cual permite utilizar el operador "pipe", que permite aplicar sucesivamente funciones a un conjunto de datos:
+
+```{r, eval = FALSE}
+
+# En R base
+sum(length(unique(x)))
+
+# Utilizando pipes
+x %>%
+  unique %>% 
+  length() %>% 
+  sum()
+
+```
+
+# Series de tiempo con R
+
+Para trabajar con series temporales en R base, se suele trabajar con objetos de clase `ts`. Sin embargo, existen otras librerías en R que permiten trabajar más fácilmente con múltiples series simultáneamente (`xts`, `zoo`, `fable`, etc.):
+
+```{r, eval = FALSE}
+
+# Posibles funciones para definir series temporales
+xts::xts()
+zoo::zoo()
+tsibble::tsibble()
+
+```
+
+# Ejemplo - Estadísticas de tráfico áereo
+
+## Lectura de datos
+
+```{r}
+
+# Cargamos un csv
+dt <- data.table::fread(here("Taller0_introduccion","Air_Traffic_Passenger_Statistics.csv"))
+
+# Corregimos los nombres de las variables (quitamos espacios, mayúsculas, caraceres especiales, etc.)
+names(dt)
+setnames(dt, names(dt), janitor::make_clean_names(names(dt)))
+names(dt)
+
+# Trabajamos con datos de clase data.frame
+class(dt)
+
+```
+
+## Manipulación de datos
+
+```{r}
+
+# Renombramos distintas variables y convertimos la variable "date" en formato fecha
+dt <- dt %>% 
+  rename(date = activity_period,
+         airline = operating_airline,
+         passenger = passenger_count,
+         region = geo_region) %>% 
+  mutate(date = as.Date(paste0(date, 01), format = "%Y%m%d"))
+
+head(dt)
+tail(dt)
+
+```
+
+## Gráficas
+
+```{r, fig.align = 'center', fig.cap = "Evolución en la cantidad de pasajeros por aerolínea y región entre julio de 2005 y junio de 2022.", fig.pos = 'H'}
+
+# Obtenemos los totales de pasajeros por fecha, aerolínea y región y graficamos
+dt %>% 
+  group_by(date, airline, region) %>% 
+  summarise(passenger_sum = sum(passenger)) %>% 
+  ggplot(aes(x = date, y = passenger_sum, color = airline)) +
+  geom_line(show.legend = FALSE) + # Demasiadas aerolíneas para mantener leyendas
+  facet_wrap(~region, scales = "free_y") + # Dejamos libre la escala de las ordenadas
+  labs(x = "Fecha",
+       y = "Cantidad de pasajeros")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Cantidad mensual de vuelos para los años 2005 a 2022.", fig.pos = 'H'}
+
+# Obtenemos los totales de vuelos por mes y año y graficamos
+dt %>% 
+  group_by(date) %>% 
+  summarise(n = n()) %>% 
+  ggplot(aes(x = month(date), y = n, color = factor(year(date)))) +
+  geom_line() +
+  scale_x_continuous(n.breaks = 12) +
+  labs(x = "Mes",
+       color = "Año") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+## Una serie - Formato `ts`
+
+```{r, fig.align = 'center', fig.cap = "Evolución mensual en la cantidad de vuelos entre 2005 y 2022.", fig.pos = 'H'}
+
+# Obtenemos la cantidad mensual de vuelos
+library(ggfortify) # Para que funcione la función autoplot()
+dt %>% 
+  group_by(date) %>% 
+  summarise(n = n()) %>%
+  select(n) %>% 
+  ts(start = c(2005, 7), frequency = 12) %>% # Tranformamos los datos a clase ts
+  autoplot() + # Análogo a ggplot para series de tiempo
+  labs(x = "Año",
+       y = "Vuelos")
+
+```
+
+El parámetro `frequency` define la cantidad de observaciones por unidad de tiempo. Si se considera la frecuencia por año, se tiene:
+
+* **Diaria:** 365
+* **Semanal:** 52 (o 365.25/7 = 52.18 por el año bisiesto)
+* **Mensual:** 12
+* **Trimestral:** 4
+* **Anual:** 1
+
+## Múltiples series - Formato `tsibble`
+
+```{r}
+
+dt_tsibble <- dt %>% 
+  group_by(date, airline, region) %>% 
+  summarise(passenger_sum = sum(passenger)) %>% 
+  as_tsibble(key = c("airline", "region"), index = date) # Con key se especifica cuál es la serie y con index a qué período corresponde cada observación
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución en la cantidad de pasajeros por aerolínea y región entre julio de 2005 y junio de 2022.", fig.pos = 'H'}
+
+# Para graficar las series en un tsibble necesitamos la librería fable
+dt_tsibble %>% 
+  autoplot(show.legend = FALSE) +
+  facet_wrap(~region, scales = "free_y") +
+labs(x = "Fecha",
+       y = "Cantidad de pasajeros")
+
+```

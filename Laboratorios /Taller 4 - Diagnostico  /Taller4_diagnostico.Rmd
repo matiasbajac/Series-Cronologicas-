@@ -1,0 +1,443 @@
+---
+title: "Taller 4 - Diagnóstico"
+#subtitle: ""
+author: "Series Cronológicas 2024"
+date: "Mayo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '',warning = FALSE,message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+library(tsoutliers)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos los datos
+
+# PIB comercio, alojamiento y suministro de comidas y bebidas
+# Serie trimestral en millones de pesos a precios constantes de 2016
+pib <- read_excel(here("Taller4_diagnostico", "PIB_sectorial.xlsx"),
+                  sheet = "Series", # Hoja del Excel
+                  col_names = c("Fecha","Agro","Industria",
+                                "Energía","Construcción","Comercio",
+                                "Transporte"), # Nombres de columnas
+                  skip = 1) # Saltear primera fila
+
+comercio <- ts(data = pib$Comercio,
+               start = c(2016,1),
+               end = c(2023,4),
+               frequency = 4)
+
+```
+
+# Exploración de los datos
+
+```{r}
+
+# Datos trimestrales (32 observaciones)
+frequency(comercio)
+length(comercio)
+
+# Máximo valor observado y fecha en la que ocurrió
+max(comercio)
+time(comercio)[which.max(comercio)]
+
+# Mínimo valor observado y fecha en la que ocurrió
+min(comercio)
+time(comercio)[which.min(comercio)]
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie PIB Comercio
+autoplot(comercio) +
+  labs(x = "Fecha",
+       y = "PIB Comercio") +
+  scale_x_continuous(breaks = 2016:2024) +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+# Identificación y estimación del modelo
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# FAC (no descartamos estacionariedad)
+comercio_acf <- ggAcf(comercio, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+comercio_pacf <- ggAcf(comercio, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(comercio_acf, comercio_pacf)
+
+```
+
+```{r}
+
+# Dada la forma de la FAC y la FACP, un posible modelo es un AR(2).
+
+# AR(2)
+modelo1 <- Arima(y = comercio, # Datos para estimar
+                 order = c(2, 0, 0), # Orden del modelo (suponemos estacionariedad)
+                 lambda = NULL) # Trabajamos con la serie sin transformar
+
+coeftest(modelo1)
+
+# Probamos un AR(2) con phi1 = 0
+modelo1 <- Arima(y = comercio,
+                 order = c(2, 0, 0),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+summary(modelo1)
+coeftest(modelo1)
+coefci(modelo1)
+autoplot(modelo1)
+
+# Nos quedamos con un modelo sin phi1
+
+```
+
+```{r, fig.align = 'center', fig.cap = "PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023 y valores ajustados para un modelo AR(2). La línea negra corresponde a los valores reales y la azul a los ajustados.", fig.pos = 'H'}
+
+# Graficamos la serie y los valores ajustados
+
+fit1 <- autoplot(comercio) +
+  autolayer(modelo1$fitted, color = "blue") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "Modelo AR(2)")
+
+fit1
+
+```
+
+# Selección de modelos
+
+## AIC
+
+```{r}
+
+# Armamos una matriz con los valores del AIC para valores del 1 al 6 de p y q
+
+norder <- 6 # Máximo orden de rezagos que queremos considerar
+aic <- matrix(0, norder + 1, norder + 1)
+rownames(aic) <- c(0:norder)
+colnames(aic) <- c(0:norder)
+
+for (i in 1:(norder + 1)) {
+  for (j in 1:(norder + 1)) {
+    modeloij <- Arima(comercio, order = c(i-1, 0, j-1), method = 'ML')
+    aic[i,j] <- modeloij$aic
+  }
+}
+
+aic
+min(aic)
+which(aic == min(aic), arr.ind = TRUE) # El AIC mínimo se da para un ARMA(3,3)
+
+```
+
+## AIC corregido
+
+```{r}
+
+# Armamos una matriz con los valores del AIC corregido para valores del 1 al 6 de p y q
+
+norder <- 6 # Máximo orden de rezagos que queremos considerar
+aicc <- matrix(0, norder + 1, norder + 1)
+rownames(aicc) <- c(0:norder)
+colnames(aicc) <- c(0:norder)
+
+for (i in 1:(norder + 1)) {
+  for (j in 1:(norder + 1)) {
+    modeloij <- Arima(comercio, order = c(i-1, 0, j-1), method = 'ML')
+    aicc[i,j] <- modeloij$aicc
+  }
+}
+
+aicc
+min(aicc)
+which(aicc == min(aicc), arr.ind = TRUE) # El AIC corregido mínimo se da para un ARMA(2,1)
+
+```
+
+## BIC
+
+```{r}
+
+# Armamos una matriz con los valores del BIC para valores del 1 al 6 de p y q
+
+norder <- 6 # Máximo orden de rezagos que queremos considerar
+bic <- matrix(0, norder + 1, norder + 1)
+rownames(bic) <- c(0:norder)
+colnames(bic) <- c(0:norder)
+
+for (i in 1:(norder + 1)) {
+  for (j in 1:(norder + 1)) {
+    modeloij <- Arima(comercio, order = c(i-1, 0, j-1), method = 'ML')
+    bic[i,j] <- modeloij$bic
+  }
+}
+
+bic
+min(bic)
+which(bic == min(bic), arr.ind = TRUE) # El BIC mínimo se da para un ARMA(2,1)
+
+```
+
+# Diagnóstico del modelo
+
+## Análisis gráfico de los residuos
+
+```{r}
+
+# Guardamos los residuos del modelo
+residuos1 <- modelo1$residuals
+
+# Buscamos los residuos máximos y mínimos
+
+max(residuos1)
+which.max(residuos1)
+time(residuos1)[which.max(residuos1)] # Junio de 2022
+
+min(residuos1)
+which.min(residuos1)
+time(residuos1)[which.min(residuos1)] # Junio de 2020
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# Graficamos los residuos
+residuos1 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos estandarizados de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# Residuos estandarizados
+residuos1_est <- residuos1/sqrt(modelo1$sigma2)
+residuos1_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados",
+       title = "PIB comercio") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+time(residuos1_est)[which.max(residuos1_est)] # Junio de 2022
+
+```
+
+## Autocorrelación de los residuos
+
+### FAC y FACP de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# FAC
+residuos_acf <- ggAcf(residuos1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos_pacf <- ggAcf(residuos1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos_acf, residuos_pacf)
+
+# Otra posibilidad es graficar a la vez los residuos, su FAC y su FACP
+# checkresiduals(residuos1)
+# tsdisplay(residuos1)
+
+```
+
+### Contraste de autocorrelación de los residuos
+
+```{r}
+
+# Test de Ljung-Box
+
+# Se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos1,
+         lag = 10,
+         type = "Ljung-Box",
+         fitdf = 2) # p + q de un modelo ARMA(p,q)
+
+```
+
+## Homocedasticidad de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Gráfico y autocorrelograma del cuadrado de los residuos de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+residuos1_2 <- residuos1^2
+
+grafico_residuos2 <- autoplot(residuos1_2) +
+  labs(x = "Fecha",
+       y = expression(epsilon[t] ^ 2)) 
+
+acf_residuos2 <- ggAcf(residuos1_2,type = "correlation") +
+  labs(x = "Rezago",
+       y = "FAC",
+       title = "")
+
+grid.arrange(grafico_residuos2, acf_residuos2)
+
+```
+
+## Normalidad de los residuos
+
+### QQ-plot de los residuos
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos1, aes(sample = residuos1)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+### Histograma de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo AR(2) para el PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H'}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos1) +
+  geom_histogram(aes(x = residuos1, y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos1),
+                            sd = sd(residuos1)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+### Contrastes de normalidad de los residuos
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad dado que hay outliers
+shapiro.test(residuos1)
+JarqueBera.test(residuos1)
+
+```
+
+# Validación del modelo
+
+## Errores de predicción a un paso dentro de la muestra
+
+```{r}
+
+# Obtenemos medidas de los errores de predicción a un paso dentro de la muestra (residuos)
+
+accuracy(modelo1)
+
+```
+
+## Ajuste fuera de la muestra
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta 2022 inclusive
+train_comercio <- window(comercio, end = c(2022,4))
+
+# Dejamos los datos de 2023 como conjunto de entrenamiento ("test set")
+test_comercio <- window(comercio, start = 2023)
+n <- length(test_comercio)
+
+```
+
+```{r}
+
+# Estimamos los modelos para el training set
+
+modelo1_train <- Arima(y = train_comercio,
+                 order = c(2, 0, 0),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción
+# será igual al largo del test set)
+
+pred1_test <- forecast(modelo1_train, h = n)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para un modelo AR(2). La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+
+grafico_pred1_test <- autoplot(pred1_test) +
+  autolayer(comercio, color = "black") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grafico_pred1_test
+
+```
+
+```{r}
+
+# Obtenemos medidas de los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al 
+# verdadero valor de la serie (conjunto de prueba)
+
+accuracy(pred1_test, test_comercio)
+
+```
+ 

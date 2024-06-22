@@ -1,0 +1,1185 @@
+---
+title: "Taller 7 - Estacionalidad"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Junio 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), tidy = TRUE, fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+install.packages("here")
+library(patchwork) # Para ordenar gráficos
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+library(TSA)
+
+install.packages("tsoutliers") 
+library(tsoutliers)
+library(lubridate)
+# library(xts)
+
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+# Cargamos los datos
+
+# Serie de PIB trimestral (IVF, 2016 = 100)
+here()
+
+pib_turismo <- read_xlsx(here("datos",
+                              "IVF_PIB_1990_2023.xlsx")) %>% 
+  rename("Fecha" = `...1`,
+         "PIB" = IVF_PIB_UY_T) %>% 
+  select(Fecha, PIB, Turismo)
+pib <- ts(pib_turismo$PIB,
+          start = c(1990,1),
+          end = c(2023, 4),
+          frequency = 4)
+
+?ts
+# Indicatriz con la cantidad de días de Turismo que caen en cada trimestre
+n <- length(pib)
+turismo <- pib_turismo$Turismo[1:n]
+## los 7 cayeron en el segundo trimestre...
+
+```
+
+# Exploración de los datos
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB trimestral (Índice de Volumen Físico) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie del PIB trimestral
+autoplot(pib) +
+  labs(x = "Fecha",
+       y = "PIB") +
+  theme(panel.grid.minor = element_blank())
+
+
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Comportamiento trimestral del PIB (IVF) entre 1990 y 2023.", fig.pos = 'H'}
+
+# La función ggmonthplot() permite observar el comportamiento por trimestre, mensual, etc.
+# de una serie y tener un primer indicio de si existe un componente estacional o no
+ggmonthplot(pib) +
+  labs(x = "Trimestres",
+       y = "PIB")
+## grafica x sep cada trimestre , cuando se dif sugiere que hay estacionalidAD.
+## dif medias x trim
+## grafico negro no se apila respecto a la media.
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Comportamiento por año del PIB (IVF) entre 1990 y 2023.", fig.pos = 'H'}
+
+# La función ggseasonplot() permite comparar el comportamiento por año de una serie y
+# advertir tendencias, estacionalidad, etc.
+ggseasonplot(pib) +
+  labs(color = "Año",
+       x = "Trimestre",
+       y = "PIB",
+       title = "PIB (IVF) por año")
+# ESTACIONALIDAD QUE NO ES MUY ESTABLE.
+
+```
+
+# Identificación del modelo
+
+## Serie en logaritmos
+
+```{r, fig.align = 'center', fig.cap = "Evolución del logaritmo del PIB trimestral (IVF) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos el logaritmo a la serie original
+lpib <- log(pib)
+
+# Volvemos a graficar la serie
+autoplot(lpib) +
+  labs(x = "Año",
+       y = "Logaritmo del PIB") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del logaritmo del PIB trimestral (1990-2023).", fig.pos = 'H'}
+
+# FAC
+install.packages("forecast")
+library(forecast)
+
+# La serie no es estacionaria
+lpib_acf <- ggAcf(lpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+lpib_pacf <- ggAcf(lpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(lpib_acf, lpib_pacf)
+
+## podemos ver que no es estacionaria 
+
+
+```
+
+## Serie diferenciada
+
+### Primera diferencia regular
+
+```{r, fig.align = 'center', fig.cap = "Evolución de la primera diferencia regular del logaritmo del PIB trimestral (IVF) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Diferenciamos la serie original (primera diferencia regular)
+dpib <- diff(lpib)
+
+# Volvemos a graficar la serie
+autoplot(dpib) +
+  labs(x = "Año",
+       y = "PIB diferenciado") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia regular del logaritmo del PIB trimestral (1990-2023).", fig.pos = 'H'}
+
+# FAC
+dpib_acf <- ggAcf(dpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dpib_pacf <- ggAcf(dpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dpib_acf, dpib_pacf)
+
+## no se necesitaria hacer otra dif, se puede idem modelo.
+## SI LA dif esta bien hecha, el desvio muestral cae
+
+```
+
+### Primera diferencia estacional
+
+```{r, fig.align = 'center', fig.cap = "Evolución de la primera diferencia estacional del logaritmo del PIB trimestral (IVF) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Diferenciamos la serie original (primera diferencia estacional)
+d4pib <- diff(lpib, lag = 4)
+ sd(d4pib)
+
+# Volvemos a graficar la serie
+autoplot(d4pib) +
+  labs(x = "Año",
+       y = "PIB diferenciado") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia estacional del logaritmo del PIB trimestral (1990-2023).", fig.pos = 'H'}
+
+# FAC
+d4pib_acf <- ggAcf(d4pib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+d4pib_pacf <- ggAcf(d4pib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(d4pib_acf, d4pib_pacf)
+## (1,0,0) 
+
+## Sarima(1,0,0)(0,1,1) primero la parte regular
+## la primera caidad del facp me hace pensar a un AR(1)
+```
+
+### Primera diferencia regular y primera diferencia estacional
+
+```{r, fig.align = 'center', fig.cap = "Evolución de la primera diferencia regular de la primera diferencia estacional del logaritmo del PIB trimestral (IVF) entre 1990 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Diferenciamos la serie original (primera diferencia estacional)
+ddpib <- diff(d4pib, lag = 1)
+# a la primera dif, le hago otra 
+ sd(ddpib)
+
+# Si volvemos a diferenciar, sobrediferenciamos y se incrementa el desvío de la serie
+# dddpib <- diff(ddpib)
+# sd(dddpib)
+
+# Volvemos a graficar la serie
+autoplot(ddpib) +
+  labs(x = "Año",
+       y = "PIB diferenciado") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia regular de la primera diferencia estacional del logaritmo del PIB trimestral (1990-2023).", fig.pos = 'H'}
+
+# FAC
+ddpib_acf <- ggAcf(ddpib, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+ddpib_pacf <- ggAcf(ddpib, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(ddpib_acf, ddpib_pacf)
+## tengo una dif regular y otra estacional 
+## lo ve en el grafico en el FAC, 
+## ve solo los multiplos
+## llega a SARIMA(0,1,0)(0,1,1)
+## Para que sea ar(1) tenes que ver lo mismo en facp que en fac 
+## el orden lo ves en el fac
+
+```
+
+# Estimación del modelo
+
+```{r}
+
+# Probamos los modelos: SARIMA(1,0,0)(0,1,1) y SARIMA(0,1,0)(0,1,1)
+
+# SARIMA(1,0,0)(0,1,1)
+turismo
+modelo1 <- Arima(y = pib, # Datos para estimar
+                 order = c(1, 0, 0), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo1)
+
+# SARIMA(0,1,0)(0,1,1)
+
+modelo2 <- Arima(y = pib, # Datos para estimar
+                 order = c(0, 1, 0), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo2)
+
+## seguramente sea sig los dias de turismo 
+```
+
+# Diagnóstico del modelo
+
+## Análisis gráfico de los residuos
+
+### Modelo 1
+
+```{r}
+
+# Guardamos los residuos del modelo
+
+# Residuos
+residuos1 <- modelo1$residuals
+
+# Residuos estandarizados
+residuos1_est <- residuos1/sqrt(modelo1$sigma2)
+
+# Buscamos el residuo máximo
+
+max(abs(residuos1))
+time(residuos1)[which.max(abs(residuos1))] # Junio 2020
+
+max(abs(residuos1_est))
+time(residuos1_est)[which.max(abs(residuos1_est))] # Junio 2020
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo SARIMA(1,0,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos1 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est <- residuos1_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+# el unico que se sale d los 3 desv es 2020
+```
+
+### Modelo 2
+
+```{r}
+
+# Guardamos los residuos del modelo
+
+# Residuos
+residuos2 <- modelo2$residuals
+
+# Residuos estandarizados
+residuos2_est <- residuos2/sqrt(modelo2$sigma2)
+
+# Buscamos el residuo máximo
+
+max(abs(residuos2))
+time(residuos2)[which.max(abs(residuos2))] # Junio 2020
+
+max(abs(residuos2_est))
+time(residuos2_est)[which.max(abs(residuos2_est))] # Junio 2020
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo SARIMA(0,1,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos2 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est <- residuos2_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+## rudio blanco 
+
+```
+
+## Autocorrelación de los residuos
+
+### Modelo 1
+
+#### FAC y FACP de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(1,0,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# FAC
+residuos1_acf <- ggAcf(residuos1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos1_pacf <- ggAcf(residuos1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos1_acf, residuos1_pacf)
+
+
+```
+
+#### Contraste de autocorrelación de los residuos
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos1,
+         lag = 25,
+         type = "Ljung-Box")
+
+
+```
+
+### Modelo 2
+
+#### FAC y FACP de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(0,1,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# FAC
+residuos2_acf <- ggAcf(residuos2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos2_pacf <- ggAcf(residuos2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos2_acf, residuos2_pacf)
+
+## no intervenimos el modelo aun
+```
+
+#### Contraste de autocorrelación de los residuos
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos2,
+         lag = 25,
+         type = "Ljung-Box")
+
+```
+
+## Normalidad de los residuos
+
+### Modelo 1
+
+#### QQ-plot de los residuos
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo SARIMA(1,0,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos1, aes(sample = residuos1)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+#### Histograma de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo SARIMA(1,0,0)(0,1,1) para el logaritmo del PIB trimestral (IVF). La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos1) +
+  geom_histogram(aes(x = residuos1,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos1),
+                            sd = sd(residuos1)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+#### Contrastes de normalidad de los residuos
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos1)
+JarqueBera.test(residuos1)
+
+```
+
+### Modelo 2
+
+#### QQ-plot de los residuos
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo SARIMA(0,1,0)(0,1,1) para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos2, aes(sample = residuos2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+#### Histograma de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo SARIMA(0,1,0)(0,1,1) para el logaritmo del PIB trimestral (IVF). La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos2) +
+  geom_histogram(aes(x = residuos2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos2),
+                            sd = sd(residuos2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+#### Contrastes de normalidad de los residuos
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# Se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos2)
+JarqueBera.test(residuos2)
+
+```
+
+# Detección de outliers y reestimación
+
+## Modelo 1
+
+```{r}
+## interviene los outliers 
+## el efecto que quiero ver va en xreg 
+## el significativo, cual es la tasa de crec menor x cada dia de turimo(inter)
+## tengo un nivel de prod menor 
+# Probamos una función de detección automática de outliers
+outliers1 <- tso(lpib, tsmethod = "arima",
+                 args.tsmethod = list(order = c(1, 0, 0),
+                                      seasonal = list(order = c(0, 1, 1))),
+                 xreg = turismo)
+outliers1
+
+# Graficamos el efecto de los outliers
+plot.tsoutliers(outliers1)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg1 <- outliers.effects(outliers1$outliers, length(lpib))
+head(xreg1)
+
+```
+
+```{r}
+
+# Reestimamos el modelo 1
+
+# SARIMA(1,0,0)(0,1,1)
+
+modelo1 <- Arima(y = pib, # Datos para estimar
+                 order = c(1, 0, 0), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg1),
+                 biasadj = TRUE)
+coeftest(modelo1)
+
+```
+
+## Modelo 2
+
+```{r}
+
+# Probamos una función de detección automática de outliers
+outliers2 <- tso(lpib, tsmethod = "arima",
+                 args.tsmethod = list(order = c(0, 1, 0),
+                                      seasonal = list(order = c(0, 1, 1))),
+                 xreg = turismo)
+outliers2
+## encuentra de manera auto los ouliers 
+# Graficamos el efecto de los outliers
+plot.tsoutliers(outliers2)
+## en azul la serie ajustad y en puntitos los outliers
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg2 <- outliers.effects(outliers2$outliers, length(lpib))
+head(xreg2)
+
+
+```
+
+```{r}
+
+# Reestimamos el modelo 2
+
+# SARIMA(0,1,0)(0,1,1)
+
+modelo2 <- Arima(y = pib, # Datos para estimar
+                 order = c(0, 1, 0), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg2),
+                 biasadj = TRUE)
+coeftest(modelo2)
+
+```
+
+# Segundo diagnóstico del modelo
+
+## Análisis gráfico de los residuos
+
+### Modelo 1
+
+```{r}
+
+# Guardamos los residuos del modelo
+
+# Residuos
+residuos1 <- modelo1$residuals
+
+# Residuos estandarizados
+residuos1_est <- residuos1/sqrt(modelo1$sigma2)
+
+# Buscamos el residuo máximo
+
+max(abs(residuos1))
+time(residuos1)[which.max(abs(residuos1))] # Marzo 2016
+
+max(abs(residuos1_est))
+time(residuos1_est)[which.max(abs(residuos1_est))] # Marzo 2016
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos1 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est <- residuos1_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+### Modelo 2
+
+```{r}
+
+# Guardamos los residuos del modelo
+
+# Residuos
+residuos2 <- modelo2$residuals
+
+# Residuos estandarizados
+residuos2_est <- residuos2/sqrt(modelo2$sigma2)
+
+# Buscamos el residuo máximo
+
+max(abs(residuos2))
+time(residuos2)[which.max(abs(residuos2))] # Marzo 2016
+
+max(abs(residuos2_est))
+time(residuos2_est)[which.max(abs(residuos2_est))] # Marzo 2016
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Residuos de un modelo SARIMA(0,1,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# Graficamos los residuos
+grafico_residuos <- residuos2 %>% autoplot() +
+  labs(x = "Fecha",
+      y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est <- residuos2_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grid.arrange(grafico_residuos, grafico_residuos_est)
+
+```
+
+## Autocorrelación de los residuos
+
+### Modelo 1
+
+#### FAC y FACP de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# FAC
+residuos1_acf <- ggAcf(residuos1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos1_pacf <- ggAcf(residuos1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos1_acf, residuos1_pacf)
+
+```
+
+#### Contraste de autocorrelación de los residuos
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos1,
+         lag = 25,
+         type = "Ljung-Box")
+
+```
+
+### Modelo 2
+
+#### FAC y FACP de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(0,1,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H'}
+
+# FAC
+residuos2_acf <- ggAcf(residuos2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos2_pacf <- ggAcf(residuos2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos2_acf, residuos2_pacf)
+## hace el autocorr para ver si le falta algo en el modelo 
+
+
+
+```
+
+#### Contraste de autocorrelación de los residuos
+
+```{r}
+
+# Test de Ljung-Box
+# No se rechaza la hipótsis nula de no autocorrelación de los residuos
+Box.test(residuos2,
+         lag = 25,
+         type = "Ljung-Box")
+
+```
+
+## Normalidad de los residuos
+
+### Modelo 1
+
+#### QQ-plot de los residuos
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos1, aes(sample = residuos1)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+#### Histograma de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF). La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos1) +
+  geom_histogram(aes(x = residuos1,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos1),
+                            sd = sd(residuos1)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+#### Contrastes de normalidad de los residuos
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# No se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos1)
+JarqueBera.test(residuos1)
+
+```
+
+### Modelo 2
+
+#### QQ-plot de los residuos
+
+```{r, fig.align = 'center', fig.cap = "QQ-plot de los residuos de un modelo SARIMA(0,1,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF).", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Armamos el QQ-plot de los residuos
+ggplot(residuos2, aes(sample = residuos2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+
+```
+
+#### Histograma de los residuos
+
+```{r, fig.align = 'center', fig.cap = "Histograma de los residuos de un modelo SARIMA(0,1,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF). La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Hacemos un histograma de los residuos
+ggplot(data = residuos2) +
+  geom_histogram(aes(x = residuos2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos2),
+                            sd = sd(residuos2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+
+```
+
+#### Contrastes de normalidad de los residuos
+
+```{r}
+
+# Tests de Shapiro y Jarque-Bera
+# No se rechaza la hipótesis nula de normalidad
+shapiro.test(residuos2)
+JarqueBera.test(residuos2)
+
+```
+
+# Predicción
+
+## Modelo 1
+
+```{r}
+
+# Especificamos el horizonte predicción h (cantidad de pasos)
+h <- 8
+
+# Especificamos las indicatrices para predecir
+
+turismo_pred <- c(7, 0, 0, 0, 0, 7, 0, 0) ## ARMO PARA 2024 Y 2025 ,CAEN EN EL PRIMER TRIMESTRE Y SEGUNDO RESPECTIVAMENTE 
+turismo_pred
+
+newxreg1 <- outliers.effects(outliers1$outliers, length(pib) + h)
+newxreg1 <- newxreg1[(length(pib) + 1):(length(pib) + h),]
+newxreg1
+
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+# Obtenemos las predicciones (debemos incluir un regresor externo)
+predicciones1 <- forecast(modelo1, h = h, 
+                          xreg = cbind(turismo_pred, newxreg1),
+                          biasadj = TRUE)
+predicciones1
+## es un indice, no me dice nada viendolo asi 
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos de un SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF). Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Graficamos las predicciones mediante un fan chart
+predicciones1 <- forecast(modelo1, h = h, 
+                          
+                          xreg = cbind(turismo_pred, newxreg1),
+                          fan = TRUE,
+                          biasadj = TRUE)
+autoplot(predicciones1) +
+  labs(x = "Fecha",
+       y = "PIB (precios constantes)",
+       title = "")
+
+```
+
+## Modelo 2
+
+```{r}
+
+# Especificamos el horizonte predicción h (cantidad de pasos)
+h <- 8
+
+# Especificamos las indicatrices para predecir
+
+turismo_pred <- c(7, 0, 0, 0, 0, 7, 0, 0)
+turismo_pred
+
+newxreg2 <- outliers.effects(outliers2$outliers, length(pib) + h)
+newxreg2 <- newxreg2[(length(pib) + 1):(length(pib) + h),]
+newxreg2
+
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+# Obtenemos las predicciones (debemos incluir un regresor externo)
+predicciones2 <- forecast(modelo2, h = h, 
+                          xreg = cbind(turismo_pred, newxreg2),
+                          biasadj = TRUE)
+predicciones2
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos de un SARIMA(1,0,0)(0,1,1) intervenido por outliers para el logaritmo del PIB trimestral (IVF). Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H', message = FALSE, warning = FALSE}
+
+# Graficamos las predicciones mediante un fan chart
+predicciones2 <- forecast(modelo2, h = h,
+                          xreg = cbind(turismo_pred, newxreg2),
+                          fan = TRUE,
+                          biasadj = TRUE)
+autoplot(predicciones2) +
+  labs(x = "Fecha",
+       y = "PIB (precios constantes)",
+       title = "")
+
+```
+
+# Validación de las predicciones
+
+## Modelo 1
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta el 2022 inclusive
+train1 <- window(pib, end = c(2022, 4))
+train1_reg <- cbind(turismo[1:length(train1)],
+                    xreg1[1:length(train1),])
+nrow(train1_reg) == length(train1) # La indicatriz es del largo correcto
+
+# Dejamos las observaciones del 2023 como conjunto de entrenamiento ("test set")
+test1 <- window(pib, start = c(2023, 1))
+n1 <- length(test1)
+
+```
+
+```{r}
+
+# Estimamos el modelo para el training set (incluimos una variable indicatriz)
+modelo1_train <- Arima(y = train1,
+                       order = c(1, 0, 0),
+                       seasonal = c(0, 1, 1),
+                       lambda = 0,
+                       xreg = train1_reg,
+                       biasadj = TRUE)
+
+```
+
+```{r}
+
+# Creamos una variable indicatriz para predecir en el test set
+test1_reg <- cbind(turismo[(length(train1) + 1):nrow(xreg1)],
+                   xreg1[(length(train1) + 1):nrow(xreg1),])
+nrow(test1_reg) == length(test1) # La indicatriz es del largo correcto
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción será igual
+# al largo del test set)
+pred_test1 <- forecast(modelo1_train,
+                       h = n1,
+                       xreg = test1_reg,
+                       biasadj = TRUE)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba un modelo SARIMA(1,0,0)(0,1,1) intervenido por outliers. La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+autoplot(pred_test1) +
+  autolayer(pib, color = "black") +
+  labs(x = "Fecha",
+       y = "PIB (precios constantes)",
+       title = "")
+## parece que el IC contiene al valor verdadero, el predicho se parece a la estimacion puntual 
+```
+
+```{r}
+## a 4 pasos tengo un error de...
+# Obtenemos los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al verdadero
+# valor de la serie (conjunto de prueba)
+accuracy(pred_test1, test1)
+
+```
+
+## Modelo 2
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta el 2022 inclusive
+train2 <- window(pib, end = c(2022, 4))
+train2_reg <- cbind(turismo[1:length(train2)],
+                    xreg2[1:length(train2),])
+nrow(train2_reg) == length(train2) # La indicatriz es del largo correcto
+
+# Dejamos las observaciones del 2023 como conjunto de entrenamiento ("test set")
+test2 <- window(pib, start = c(2023, 1))
+n2 <- length(test2)
+
+```
+
+```{r}
+
+# Estimamos el modelo para el training set (incluimos una variable indicatriz)
+modelo2_train <- Arima(y = train2,
+                       order = c(0, 1, 0),
+                       seasonal = c(0, 1, 1),
+                       lambda = 0,
+                       xreg = train2_reg,
+                       biasadj = TRUE)
+
+```
+
+```{r}
+
+# Creamos una variable indicatriz para predecir en el test set
+test2_reg <- cbind(turismo[(length(train2) + 1):nrow(xreg2)],
+                   xreg2[(length(train2) + 1):nrow(xreg2),])
+nrow(test2_reg) == length(test2) # La indicatriz es del largo correcto
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción será igual
+# al largo del test set)
+pred_test2 <- forecast(modelo2_train,
+                       h = n2,
+                       xreg = test2_reg,
+                       biasadj = TRUE)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba un modelo SARIMA(0,1,0)(0,1,1) intervenido por outliers. La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+autoplot(pred_test2) +
+  autolayer(pib, color = "black") +
+  labs(x = "Fecha",
+       y = "PIB (precios constantes)",
+       title = "")
+
+```
+
+```{r}
+
+# Obtenemos los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al verdadero
+# valor de la serie (conjunto de prueba)
+accuracy(pred_test2, test2)
+
+```
+
+# Predicciones de tasas de crecimiento
+## la tasa es promedio contra promedio 
+## Modelo 1
+
+```{r}
+
+# Calculamos las tasas de crecimiento interanual del PIB trimestral
+
+# Armamos la serie completa con predicciones del IVF
+PIB <- data.frame(Fecha = seq(from = as.Date("1990-01-01"),
+                                      to = as.Date("2025-10-01"),
+                                      by = "quarter"),
+                  PIB = c(pib, predicciones1$mean))
+
+# writexl::write_xlsx(PIB, "PIB_proyecciones1.xlsx")
+
+# Calculamos las tasas de crecimiento
+crecimiento2024 <- (((PIB %>% 
+                        filter(year(Fecha) == 2024) %>% 
+                        pull(PIB) %>% 
+                        mean())/
+                       (PIB %>% 
+                          filter(year(Fecha) == 2023) %>% 
+                          pull(PIB) %>% mean()))-1)*100
+crecimiento2025 <- (((PIB %>% 
+                        filter(year(Fecha) == 2025) %>% 
+                        pull(PIB) %>% 
+                        mean())/
+                       (PIB %>% 
+                          filter(year(Fecha) == 2024) %>% 
+                          pull(PIB) %>% mean()))-1)*100
+
+# Armamos un cuadro con las tasas de crecimiento
+data.frame("Año" = c(2024, 2025),
+           "Crecimiento" = paste0(round(c(crecimiento2024,
+                                          crecimiento2025), 1),"%"))
+
+
+```
+
+## Modelo 2
+
+```{r}
+
+# Calculamos las tasas de crecimiento interanual del PIB trimestral
+
+# Armamos la serie completa con predicciones del IVF
+PIB <- data.frame(Fecha = seq(from = as.Date("1990-01-01"),
+                                      to = as.Date("2025-10-01"),
+                                      by = "quarter"),
+                  PIB = c(pib, predicciones2$mean))
+
+# writexl::write_xlsx(PIB, "PIB_proyecciones2.xlsx")
+
+# Calculamos las tasas de crecimiento
+crecimiento2024 <- (((PIB %>% 
+                        filter(year(Fecha) == 2024) %>% 
+                        pull(PIB) %>% 
+                        mean())/
+                       (PIB %>% 
+                          filter(year(Fecha) == 2023) %>% 
+                          pull(PIB) %>% mean()))-1)*100
+crecimiento2025 <- (((PIB %>% 
+                        filter(year(Fecha) == 2025) %>% 
+                        pull(PIB) %>% 
+                        mean())/
+                       (PIB %>% 
+                          filter(year(Fecha) == 2024) %>% 
+                          pull(PIB) %>% mean()))-1)*100
+
+# Armamos un cuadro con las tasas de crecimiento
+data.frame("Año" = c(2024, 2025),
+           "Crecimiento" = paste0(round(c(crecimiento2024,
+                                          crecimiento2025), 1),"%"))
+
+```

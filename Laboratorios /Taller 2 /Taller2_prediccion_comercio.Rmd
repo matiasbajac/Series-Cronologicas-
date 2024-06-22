@@ -1,0 +1,679 @@
+---
+title: "Taller 2 - Predicción"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Abril 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '',warning = FALSE,message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(lmtest)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos los datos
+
+# PIB comercio, alojamiento y suministro de comidas y bebidas
+# Serie trimestral en millones de pesos a precios constantes de 2016
+pib <- read_excel(here("Taller2_prediccion", "PIB_sectorial.xlsx"),
+                  sheet = "Series", # Hoja del Excel
+                  col_names = c("Fecha","Agro","Industria",
+                                "Energía","Construcción","Comercio",
+                                "Transporte"), # Nombres de columnas
+                  skip = 1) # Saltear primera fila
+
+comercio <- ts(data = pib$Comercio,
+               start = c(2016,1),
+               end = c(2023,4),
+               frequency = 4)
+
+```
+
+# Exploración de los datos
+
+En este taller, se trabajará con la serie del Producto Interno Bruto correspondiente al sector "Comercio, alojamiento y suministro de comidas y bebidas", medido en millones de pesos a precios constantes de 2016. Se cuenta con datos trimestrales entre marzo de 2016 y diciembre de 2023. De esta manera, se cuenta con 32 observaciones.
+
+Antes de pasar a la etapa de modelización, es importante explorar los datos mediante distintos gráficos. Los mismos permiten visualizar distintos aspectos como:
+
+* Tendencias y/o media no constante
+* Varianza no constante
+* Valores atípicos
+* Estacionalidad
+
+```{r}
+
+# Datos trimestrales (32 observaciones)
+frequency(comercio)
+length(comercio)
+
+# No es conveniente usar la función summary() porque no considera
+# la estructura temporal de los datos
+# summary(comercio)
+
+# Máximo valor observado y fecha en la que ocurrió
+max(comercio)
+time(comercio)[which.max(comercio)]
+
+# Mínimo valor observado y fecha en la que ocurrió
+min(comercio)
+time(comercio)[which.min(comercio)]
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Evolución del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Graficamos la serie PIB Comercio
+autoplot(comercio) +
+  labs(x = "Fecha",
+       y = "PIB Comercio") +
+  scale_x_continuous(breaks = 2016:2024) +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Comportamiento trimestral del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# La función ggmonthplot() permite observar el comportamiento por
+# trimestre, mensual, etc. de una serie y tener un primer indicio
+# de si existe un componente estacional o no
+ggmonthplot(comercio) +
+  labs(x = "Trimestres",
+       y = "PIB Comercio")
+
+# Otras formas:
+
+# R base: función monthplot
+# monthplot(comercio, xlab = "Trimestres",
+#           ylab = "PIB Comercio")
+
+# ggplot: Función ggsubseriesplot()
+# ggsubseriesplot(comercio) +
+#   labs(x = "Trimestres",
+#        y = "PIB Comercio")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Comportamiento por año del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# La función ggseasonplot() permite comparar el comportamiento por año
+# de una serie y advertir tendencias, estacionalidad, etc.
+ggseasonplot(comercio) +
+  labs(color = "Año",
+       x = "Trimestre",
+       y = "PIB Comercio",
+       title = "")
+
+```
+
+# Identificación y estimación del modelo
+
+En la etapa de exploración, se obtiene una primera idea acerca del comportamiento de la serie y de si es estacionaria o no. Para verificarlo, en primera instancia se estima la Función de Autocorrelación. Si se observa una caída relativamente rápida en las autocorrelaciones simples, no se descarta que el proceso sea estacionario y se pasa a la etapa de identificación. Para ello, se utiliza también la Función de Autocorrelación Parcial.
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial estimadas del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023.", fig.pos = 'H'}
+
+# FAC (no descartamos estacionariedad)
+comercio_acf <- ggAcf(comercio, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+comercio_pacf <- ggAcf(comercio, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(comercio_acf, comercio_pacf)
+
+```
+
+## Serie original
+
+```{r}
+
+# Dada la forma de la FAC y la FACP, dos posibles modelos son AR(2) y MA(2).
+
+# AR(2)
+modelo1 <- Arima(y = comercio, # Datos para estimar
+                 order = c(2, 0, 0), # Orden del modelo (suponemos estacionariedad)
+                 lambda = NULL) # Trabajamos con la serie sin transformar
+
+summary(modelo1)
+coeftest(modelo1)
+autoplot(modelo1)
+
+# Probamos un AR(2) con phi1 = 0
+modelo1 <- Arima(y = comercio,
+                 order = c(2, 0, 0),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+summary(modelo1)
+coeftest(modelo1)
+autoplot(modelo1)
+
+# MA(2)
+modelo2 <- Arima(y = comercio,
+                 order = c(0, 0, 2),
+                 lambda = NULL)
+
+summary(modelo2)
+coeftest(modelo2)
+autoplot(modelo2)
+
+# Probamos un MA(2) con theta1 = 0
+modelo2 <- Arima(y = comercio,
+                 order = c(0, 0, 2),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+summary(modelo2)
+coeftest(modelo2)
+autoplot(modelo2)
+
+# Nos quedamos con los modelos sin phi1 ni theta1
+
+```
+
+```{r, fig.align = 'center', fig.cap = "PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023 y valores ajustados para modelos AR(2) y MA(2). La línea negra corresponde a los valores reales y la azul a los ajustados.", fig.pos = 'H'}
+
+# Graficamos la serie y los valores ajustados
+
+# Modelo 1
+fit1 <- autoplot(comercio) +
+  autolayer(modelo1$fitted, color = "blue") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "Modelo AR(2)")
+
+# Modelo 2
+fit2 <- autoplot(comercio) +
+  autolayer(modelo2$fitted, color = "blue") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "Modelo MA(2)")
+
+grid.arrange(fit1, fit2)
+
+```
+
+## Serie transformada
+
+```{r}
+
+# Dada la forma de la FAC y la FACP, dos posibles modelos son AR(1) y AR(2)
+
+# AR(2)
+modelo1_trans <- Arima(y = comercio, # Datos para estimar
+                 order = c(2, 0, 0), # Orden del modelo (suponemos estacionariedad)
+                 lambda = 0, # Aplicamos una transformación logarítmica
+                 biasadj = TRUE, # Ajustamos el sesgo en los valores ajustados
+                 #dado por las transformaciones
+                 fixed = c(0, NA, NA))
+
+summary(modelo1_trans)
+coeftest(modelo1_trans)
+
+# MA(2)
+modelo2_trans <- Arima(y = comercio,
+                 order = c(0, 0, 2),
+                 lambda = 0,
+                 biasadj = TRUE,
+                 fixed = c(0, NA, NA))
+
+summary(modelo2_trans)
+coeftest(modelo2_trans)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) entre 2016 y 2023 y valores ajustados para modelos AR(2) y MA(2) (modelo estimado para la serie transformada). La línea negra corresponde a los valores reales y la azul a los ajustados.", fig.pos = 'H'}
+
+# Graficamos la serie y los valores ajustados
+
+# Modelo 1
+fit1_trans <- autoplot(comercio) +
+  autolayer(modelo1_trans$fitted, color = "blue") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "Modelo AR(2)")
+
+# Modelo 2
+fit2_trans <- autoplot(comercio) +
+  autolayer(modelo2_trans$fitted, color = "blue") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "Modelo MA(2)")
+
+grid.arrange(fit1_trans, fit2_trans)
+
+```
+
+# Predicción
+
+En lo que sigue, se supone que los modelos fueron correctamente identificados y estimados, por lo que puede pasarse directamente a la etapa de predicción. No se considera la posibilidad de que la serie no sea estacionaria y/o que tenga estacionalidad. Es decir, que se saltea la etapa de diagnóstico y no se verifican los distintos supuestos acerca de los residuos (media nula, varianza constante, no autocorrelación y normalidad).
+
+## Serie original
+
+### Cálculo de predicciones
+
+```{r}
+
+# Obtenemos las predicciones con la función forecast() del paquete forecast
+# Por defecto, se predice a 10 pasos para las series anuales y a 2 años 
+# para las series de mayor frecuencia (ver argumento h en ?forecast)
+
+# Modelo 1
+pred1 <- forecast(modelo1)
+pred1 # Por defecto, tenemos la estimación puntual y los
+# intervalos de confianza al 80% y 95%
+
+# Modelo 2
+pred2 <- forecast(modelo2)
+pred2
+
+```
+
+### Gráfico de predicciones
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). Se consideraron intervalos de confianza al 80\\% y 95\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+
+# Modelo 1
+grafico_pred1 <- autoplot(pred1) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+grafico_pred2 <- autoplot(pred2) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1, grafico_pred2)
+
+# Otra forma: usar la función plot() de R base
+
+# Modelo 1
+# plot(pred1,
+#      xlab = "Fecha",
+#      ylab = "PIB Comercio",
+#      main = "")
+
+# Modelo 2
+# plot(pred2,
+#      xlab = "Fecha",
+#      ylab = "PIB Comercio",
+#      main = "")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2).", fig.pos = 'H'}
+
+# Graficamos las predicciones puntuales obtenidas (media condicional sin 
+# intervalos de confianza)
+
+# Modelo 1
+grafico_pred1_sinPI <- autoplot(pred1, PI = FALSE) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+grafico_pred2_sinPI <- autoplot(pred2, PI = FALSE) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_sinPI, grafico_pred2_sinPI)
+
+# Otra forma: usar la función plot() de R base
+
+# Modelo 1
+# plot(pred1,
+#      xlab = "Fecha",
+#      ylab = "PIB Comercio",
+#      main = "", PI = FALSE)
+
+# Modelo 2
+# plot(pred2,
+#      xlab = "Fecha",
+#      ylab = "PIB Comercio",
+#      main = "", PI = FALSE)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). Se consideraron intervalos de confianza del 50\\%, 60\\%, 70\\%, 80\\% y 90\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas para distintos intervalos de confianza
+
+# Modelo 1
+pred1_int <- forecast(modelo1, level = seq(50, 90, by = 10))
+grafico_pred1_int <- autoplot(pred1_int) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+pred2_int <- forecast(modelo2, level = seq(50, 90, by = 10))
+grafico_pred2_int <- autoplot(pred2_int) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_int, grafico_pred2_int)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). Se consideraron intervalos de confianza entre el 51\\% y 99\\%.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas mediante un fan chart
+
+# Modelo 1
+pred1_fan <- forecast(modelo1, fan = TRUE)
+grafico_pred1_fan <- autoplot(pred1_fan) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+pred2_fan <- forecast(modelo2, fan = TRUE)
+grafico_pred2_fan <- autoplot(pred2_fan) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_fan, grafico_pred2_fan)
+
+```
+
+### Bootstrap
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). Se consideraron intervalos de confianza al 80\\% y 95\\% (la distribución de los residuos fue obtenida mediante técnicas de bootstrap).", fig.pos = 'H'}
+
+# Si los residuos no cumplen con el supuesto de normalidad, una alternativa para
+# obtener su distribución es emplear técnicas de bootstrap.
+
+# Modelo 1
+pred1_boot <- forecast(modelo1, bootstrap = TRUE, npaths = 5000)
+# Se toman 5000 muestras con reposición de la muestra original
+grafico_pred1_boot <- autoplot(pred1_boot) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+pred2_boot <- forecast(modelo2, bootstrap = TRUE, npaths = 5000)
+grafico_pred2_boot <- autoplot(pred2_boot) +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_boot, grafico_pred2_boot)
+
+```
+
+```{r}
+
+# Al utilizar el bootstrap, no cambia la predicción puntual,
+# sino solamente los intervalos de confianza
+
+# Modelo 1
+identical(pred1$mean, pred1_boot$mean)
+identical(pred1$lower, pred1_boot$lower)
+identical(pred1$upper, pred1_boot$upper)
+
+# Modelo 2
+identical(pred2$mean, pred2_boot$mean)
+identical(pred2$lower, pred1_boot$lower)
+identical(pred2$upper, pred2_boot$upper)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). Se consideraron intervalos de confianza al 80\\% y 95\\% con (líneas rojas) y sin bootstrap (líneas negras).", fig.pos = 'H'}
+
+grafico_pred1_comparacion <- autoplot(pred1, PI = FALSE) +
+  autolayer(pred1$lower, color = "black") +
+  autolayer(pred1$upper, color = "black") +
+  autolayer(pred1_boot$lower, color = "red") +
+  autolayer(pred1_boot$upper, color = "red") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "",
+       color = "Intervalo")
+
+grafico_pred2_comparacion <- autoplot(pred2, PI = FALSE) +
+  autolayer(pred2$lower, color = "black") +
+  autolayer(pred2$upper, color = "black") +
+  autolayer(pred2_boot$lower, color = "red") +
+  autolayer(pred2_boot$upper, color = "red") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "",
+       color = "Intervalo")
+
+grid.arrange(grafico_pred1_comparacion, grafico_pred2_comparacion)
+
+```
+
+## Serie transformada
+
+```{r}
+
+# Obtenemos las predicciones a 8 pasos para la serie transformada
+# Si no ajustamos el sesgo por transformación y volvemos a la 
+# serie original aplicando la transformación inversa, obtenemos 
+# intervalos de confianza asimétricos y la predicción puntual resulta 
+# ser la mediana condicional. Al ajustar las predicciones, se lleva 
+# la predicción puntual a la media condicional.
+
+# Modelo 1
+pred1_trans_sin_aj <- forecast(modelo1_trans, biasadj = FALSE)
+pred1_trans <- forecast(modelo1_trans, biasadj = TRUE)
+# Ajustamos el sesgo por transformación
+
+# Modelo 2
+pred2_trans_sin_aj <- forecast(modelo2_trans, biasadj = FALSE)
+pred2_trans <- forecast(modelo2_trans, biasadj = TRUE)
+# Ajustamos el sesgo por transformación
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para los modelos AR(2) y MA(2). Se consideraron intervalos de confianza al 80\\% y 95\\%. La línea azul corresponde a las predicciones ajustadas, y la roja a las sin ajustar.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+
+# Modelo 1
+grafico_pred1_trans <- autoplot(pred1_trans) +
+  autolayer(pred1_trans_sin_aj$mean, color = "red") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+grafico_pred2_trans <- autoplot(pred2_trans) +
+  autolayer(pred2_trans_sin_aj$mean, color = "red") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_trans, grafico_pred2_trans)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones puntuales a 8 pasos del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para los modelos AR(2) y MA(2) con y sin ajuste del sesgo por transformación.", fig.pos = 'H'}
+
+# Comparamos las predicciones puntuales con y sin ajuste
+
+# Modelo 1
+comparacion_ajuste1 <- data.frame(Fecha = seq(from = as.Date("2024-01-01"),
+                                             to = as.Date("2025-12-31"),
+                                             by = "quarter"),
+                                  sin_ajustar = pred1_trans_sin_aj$mean,
+                                  ajustada = pred1_trans$mean) %>%
+  pivot_longer(cols = c(sin_ajustar, ajustada),
+               names_to = "Serie",
+               values_to = "Valores") %>% 
+  mutate(Serie = recode(Serie,
+                        "sin_ajustar" = "Sin ajustar",
+                        "ajustada" = "Ajustada"))
+
+grafico_comparacion_ajuste1 <- ggplot(comparacion_ajuste1) +
+  geom_line(aes(x = Fecha, y = Valores, color = Serie)) +
+  labs(color = "Predicción")
+
+# Modelo 2
+comparacion_ajuste2 <- data.frame(Fecha = seq(from = as.Date("2024-01-01"),
+                                              to = as.Date("2025-12-31"),
+                                              by = "quarter"),
+                                  sin_ajustar = pred2_trans_sin_aj$mean,
+                                  ajustada = pred2_trans$mean) %>%
+  pivot_longer(cols = c(sin_ajustar, ajustada),
+               names_to = "Serie",
+               values_to = "Valores") %>% 
+  mutate(Serie = recode(Serie,
+                        "sin_ajustar" = "Sin ajustar",
+                        "ajustada" = "Ajustada"))
+
+grafico_comparacion_ajuste2 <- ggplot(comparacion_ajuste2) +
+  geom_line(aes(x = Fecha, y = Valores, color = Serie)) +
+  labs(color = "Predicción")
+
+grid.arrange(grafico_comparacion_ajuste1, grafico_comparacion_ajuste2)
+
+```
+
+# Validación de las predicciones
+
+Dado que el modelo siempre tiene un mejor ajuste dentro de la muestra que se usó para estimarlo que para nuevos datos, es importante evaluar la calidad de las predicciones en un nuevo conjunto de observaciones.
+
+La manera más simple de validar los pronósticos obtenidos es dividiendo la muestra en dos partes:
+
+* **Datos de entrenamiento:** También llamado *"training set"*, se compone de la primera parte de la muestra y se utiliza para estimar el modelo identificado.
+* **Datos de prueba:** Se lo conoce como *"test set"* y se lo utiliza para evaluar las predicciones obtenidas mediante el *training set* a partir de distintas medidas de error.
+
+## Errores de predicción a un paso dentro de la muestra
+
+```{r}
+
+# Obtenemos medidas de los errores de predicción a un paso dentro de la muestra (residuos)
+
+# Modelo 1
+accuracy(modelo1)
+
+# Modelo 2
+accuracy(modelo2)
+
+```
+
+## Ajuste fuera de la muestra
+
+```{r}
+
+# Definimos una muestra de entrenamiento ("training set") hasta 2022 inclusive
+train_comercio <- window(comercio, end = c(2022,4))
+
+# Dejamos los datos de 2023 como conjunto de entrenamiento ("test set")
+test_comercio <- window(comercio, start = 2023)
+n <- length(test_comercio)
+
+```
+
+```{r}
+
+# Estimamos los modelos para el training set (series sin transformar)
+
+# Modelo 1
+modelo1_train <- Arima(y = train_comercio,
+                 order = c(2, 0, 0),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+# Modelo 2
+modelo2_train <- Arima(y = train_comercio,
+                 order = c(0, 0, 2),
+                 lambda = NULL,
+                 fixed = c(0, NA, NA))
+
+```
+
+```{r}
+
+# Predecimos fuera de la muestra (el horizonte de predicción
+# será igual al largo del test set)
+
+# Modelo 1
+pred1_test <- forecast(modelo1_train, h = n)
+
+# Modelo 2
+pred2_test <- forecast(modelo2_train, h = n)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Predicciones en el conjunto de prueba del PIB del sector Comercio, alojamiento y suministro de comidas y bebidas (millones de pesos a precios constantes de 2016) para modelos AR(2) y MA(2). La línea azul corresponde a las predicciones.", fig.pos = 'H'}
+
+# Graficamos las predicciones obtenidas
+
+# Modelo 1
+grafico_pred1_test <- autoplot(pred1_test) +
+  autolayer(comercio, color = "black") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+# Modelo 2
+grafico_pred2_test <- autoplot(pred2_test) +
+  autolayer(comercio, color = "black") +
+  labs(x = "Fecha",
+       y = "PIB Comercio",
+       title = "")
+
+grid.arrange(grafico_pred1_test, grafico_pred2_test)
+
+```
+
+```{r}
+
+# Obtenemos medidas de los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al 
+# verdadero valor de la serie (conjunto de prueba)
+
+# Modelo 1
+accuracy(pred1_test, test_comercio)
+
+# Modelo 2
+accuracy(pred2_test, test_comercio)
+
+```
+ 

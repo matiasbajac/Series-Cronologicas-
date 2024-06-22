@@ -1,0 +1,830 @@
+---
+title: "Taller 1 - Simulación e identificación de procesos estocásticos"
+subtitle: "Adaptado del taller 2022 de Federico Molina"
+author: "Series Cronológicas 2024"
+date: "Marzo 2024"
+#bibliography: [bibliografia.bib]
+output:
+  pdf_document:
+    #toc: true
+    fig_caption: true
+    keep_tex: yes
+    number_sections: yes
+    citation_package: natbib
+    extra_dependencies:
+      bbm: null
+      amsthm: null
+      amsmath: null
+      babel: spanish
+      float: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, tidy.opts = list(width.cutoff = 50), fig.pos = 'H', out.extra = '', warning = FALSE, message = FALSE)
+
+```
+
+```{r, echo = FALSE}
+
+# Cargamos las librerías
+library(tidyverse)
+library(here)
+library(forecast)
+library(gridExtra)
+
+# Fijamos una semilla
+set.seed(123)
+
+```
+
+# Simulación de procesos estocásticos
+
+## Ruido Blanco Gaussiano
+
+El Ruido Blanco es el proceso estocástico débilmente estacionario más simple y representa la "aleatoriedad pura". Cumple las siguientes propiedades:
+
+1. $E(\varepsilon_t) = 0$
+2. $\gamma_0 = \sigma^2$
+3. $\gamma_k = 0$ si $k \neq 0$
+
+Si las variables tienen una distribución normal, el proceso será Gaussiano.
+
+```{r}
+
+# Como las observaciones son independientes, podemos simular un Ruido Blanco Gaussiano con la función rnorm()
+RB <- ts(rnorm(1500, 0, 1))
+
+# Otra forma: función arima.sim (por defecto, el Ruido Blanco es Gaussiano)
+# RB <- arima.sim(model = list(), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un Ruido Blanco Gaussiano.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(RB) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+# Otra forma: usar plot()
+# plot(RB, main = "Simulación de un Ruido Blanco Gaussiano",
+#      xlab = "Tiempo", ylab = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un Ruido Blanco Gaussiano.", fig.pos = 'H'}
+
+# FAC
+acf_rb <- ggAcf(RB, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_rb <- ggAcf(RB, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_rb, pacf_rb)
+
+# Otra forma para obtener la FACP
+# ggPacf(RB, lag.max = 24) +
+#   labs(x = "Rezago",
+#        y = "Autocorrelación parcial",
+#        title = "")
+
+# Otra forma de obtener la FAC y la FACP con R base
+
+# acf(RB, main = "FAC para un Ruido Blanco",
+#     xlab = "Rezago",
+#     ylab = "Autocorrelación")
+
+# pacf(RB, main = "FACP para un Ruido Blanco",
+#      xlab = "Rezago",
+#      ylab = "Autocorrelación parcial")
+
+```
+
+## Random Walk
+
+El proceso Random Walk es un caso particular de los procesos AR(1) cuando el coeficiente $\phi$ toma el valor 1, por lo que no es estacionario.
+
+$$y_t = y_{t-1} + \varepsilon_t$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+```{r}
+
+# Simulamos un Ruido Blanco
+RB <- rnorm (1500, 0, 1)
+head(RB)
+
+# Obtenemos un Random Walk como la suma acumulada de shocks
+RW <- cumsum(RB)
+head(RW)
+
+# Convertimos el proceso a formato ts
+RW <- ts(RW)
+
+# Otra forma: función arima.sim
+# RW <- arima.sim(model = list(order = c(0, 1, 0)), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un Random Walk.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(RW) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación para un Random Walk.", fig.pos = 'H'}
+
+# FAC
+ggAcf(RW, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+```
+
+Cuando se agrega una constante, se obtiene un Random Walk con *drift*:
+
+$$y_t = \delta + y_{t-1} + \varepsilon_t$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+```{r}
+
+# Simulamos un Ruido Blanco
+RB <- rnorm (1500, 0, 1)
+head(RB)
+
+# Obtenemos un Random Walk como la suma acumulada de shocks más el drift de 0.2
+delta <- 0.2
+RW_drift <- RB + delta
+RW_drift <- cumsum(RW_drift)
+head(RW_drift)
+
+# Convertimos el proceso a formato ts
+RW_drift <- ts(RW_drift)
+
+# Otra forma: función arima.sim
+# RW_drift <- arima.sim(model = list(order = c(0, 1, 0)), n = 1500, mean = 0.2)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un Random Walk con drift.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(RW_drift) +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Función de Autocorrelación para un Random Walk con drift.", fig.pos = 'H'}
+
+# FAC
+ggAcf(RW_drift, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+```
+
+## Procesos AR(1)
+
+Los procesos autorregresivos son aquellos en los que el valor en un determinado período depende de valores anteriores más un shock, el cual introduce la aleatoriedad en la serie. En particular, los procesos AR(1) dependen de lo ocurrido en el período inmediatamente anterior, de forma que pueden escribirse como:
+
+$$y_t = \phi y_{t-1} + \varepsilon_t$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+En los procesos autorregresivos estacionarios, se observa una caída exponencial en los coeficientes de autocorrelación hasta no ser significativamente distintos de cero. Cuando el signo de $\phi$ en un proceso AR(1) es negativo, dicha caída alterna su signo.
+
+A su vez, a menor valor absoluto de dicho coeficiente, menor persistencia tendrá el proceso y más rápidamente se reducirán las autocorrelaciones. Si $|\phi| < 1$, el proceso es estacionario, lo cual equivale a que la raíz del polinomio característico se encuentre fuera del círculo unitario:
+
+$$y_t - \phi y_{t-1} = \varepsilon_t \Rightarrow (1 - \phi L) yt = \varepsilon_t$$
+
+$$1 - \phi L = 0 \Rightarrow L = \frac{1}{\phi} \Rightarrow \bigg| \frac{1}{\phi} \bigg| > 1 \Leftrightarrow |\phi| < 1$$
+
+Por su parte, a través del autocorrelograma parcial, se determina el orden del proceso. De esta manera, para un proceso AR(1), sólo el primer coeficiente de autocorrelación parcial debería ser significativamente distinto de cero (positivo cuando $\phi > 0$ y negativo cuando $\phi < 0$).
+
+```{r}
+
+# Simulamos un proceso AR(1) con phi = 0,7
+simula_ar1_1 <- arima.sim(list(ar = 0.7), n = 1500)
+class(simula_ar1_1) # Se crea un objeto de clase ts
+head(simula_ar1_1)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso AR(1) con coeficiente positivo y alta persistencia.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar1_1) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso AR(1) con coeficiente positivo y alta persistencia.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar1_1 <- ggAcf(simula_ar1_1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar1_1 <- ggAcf(simula_ar1_1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar1_1, pacf_simula_ar1_1)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial teóricas y estimadas para 1500 observaciones de un proceso AR(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# Obtenemos las autocorrelaciones teóricas
+ar1_1_acf_teorico <- ARMAacf(ar = 0.7, lag.max = 14, pacf = FALSE)
+ar1_1_pacf_teorico <- ARMAacf(ar = 0.7, lag.max = 14, pacf = TRUE)
+
+# Obtenemos las autocorrelaciones estimadas
+ar1_1_acf_est <- ggAcf(simula_ar1_1, plot = FALSE, lag.max = 14, type = "correlation")
+ar1_1_pacf_est <- ggAcf(simula_ar1_1, plot = FALSE, lag.max = 14, type = "partial")
+
+# Ordenamos los datos de la FAC para poder graficarlos
+ar1_1_teorico_est_acf <- data.frame(rezago = 0:14, "Teórica" = ar1_1_acf_teorico, "Estimación" = ar1_1_acf_est$acf)
+ar1_1_teorico_est_acf <- ar1_1_teorico_est_acf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FAC teórica y estimada
+ar1_1_acf <- ggplot(ar1_1_teorico_est_acf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       fill = "FAC")
+
+# Ordenamos los datos de la FACP para poder graficarlos
+ar1_1_teorico_est_pacf <- data.frame(rezago = 1:14, "Teórica" = ar1_1_pacf_teorico, "Estimación" = ar1_1_pacf_est$acf)
+ar1_1_teorico_est_pacf <- ar1_1_teorico_est_pacf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FACP teórica y estimada
+ar1_1_pacf <- ggplot(ar1_1_teorico_est_pacf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       fill = "FACP")
+
+grid.arrange(ar1_1_acf, ar1_1_pacf)
+
+```
+
+
+```{r}
+
+# Simulamos un proceso AR(1) con phi = -0,3
+simula_ar1_2 <- arima.sim(list(ar = -0.3), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso AR(1) con coeficiente negativo y baja persistencia.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar1_2) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso AR(1) con coeficiente negativo y baja persistencia.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar1_2 <- ggAcf(simula_ar1_2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar1_2 <- ggAcf(simula_ar1_2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar1_2, pacf_simula_ar1_2)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial teóricas y estimadas para 1500 observaciones de un proceso AR(1) con coeficiente negativo.", fig.pos = 'H'}
+
+# Obtenemos las autocorrelaciones teóricas
+ar1_2_acf_teorico <- ARMAacf(ar = -0.3, lag.max = 14, pacf = FALSE)
+ar1_2_pacf_teorico <- ARMAacf(ar = -0.3, lag.max = 14, pacf = TRUE)
+
+# Obtenemos las autocorrelaciones estimadas
+ar1_2_acf_est <- ggAcf(simula_ar1_2, plot = FALSE, lag.max = 14, type = "correlation")
+ar1_2_pacf_est <- ggAcf(simula_ar1_2, plot = FALSE, lag.max = 14, type = "partial")
+
+# Ordenamos los datos de la FAC para poder graficarlos
+ar1_2_teorico_est_acf <- data.frame(rezago = 0:14, "Teórica" = ar1_2_acf_teorico, "Estimación" = ar1_2_acf_est$acf)
+ar1_2_teorico_est_acf <- ar1_2_teorico_est_acf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FAC teórica y estimada
+ar1_2_acf <- ggplot(ar1_2_teorico_est_acf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       fill = "FAC")
+
+# Ordenamos los datos de la FACP para poder graficarlos
+ar1_2_teorico_est_pacf <- data.frame(rezago = 1:14, "Teórica" = ar1_2_pacf_teorico, "Estimación" = ar1_2_pacf_est$acf)
+ar1_2_teorico_est_pacf <- ar1_2_teorico_est_pacf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FACP teórica y estimada
+ar1_2_pacf <- ggplot(ar1_2_teorico_est_pacf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       fill = "FACP")
+
+grid.arrange(ar1_2_acf, ar1_2_pacf)
+
+```
+
+## Procesos MA(1)
+
+Los procesos de medias móviles son aquellos que pueden expresarse como combinación lineal de shocks pasados y presentes. En los procesos MA(1), únicamente se considera el Ruido Blanco presente y el shock del período inmediatamente anterior:
+
+$$Y_t = \varepsilon_t - \theta \varepsilon_{t-1}$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+Al tratarse de combinaciones lineales finitas de shocks por definición estacionarios, los procesos MA de orden **finito** serán también estacionarios.
+
+En los modelos de medias móviles, los autocorrelogramas se comportan "al revés" que en los procesos autorregresivos: la Función de Autocorrelación Parcial debe exhibir una caída exponencial y la Función de Autocorrelación denota el orden del modelo. De esta manera, para un proceso MA(1) sólo el primer coeficiente de autocorrelación será significativamente distinto de cero.
+
+De acuerdo con la especificación anterior en la que $\theta$ está precedida por un signo negativo, si $\theta > 0$, los autocorrelogramas parciales presentan signo positivo para todos los rezagos. En cambio, cuando $\theta < 0$, las autocorrelaciones parciales alternan su signo.
+
+```{r}
+
+# Simulamos un proceso MA(1) con theta = 0,7
+# En la función arima.sim(), el signo del coeficiente está invertido
+simula_ma_1 <- arima.sim(list(ma = -0.7), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso MA(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ma_1) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso MA(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ma_1 <- ggAcf(simula_ma_1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ma_1 <- ggAcf(simula_ma_1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ma_1, pacf_simula_ma_1)
+
+```
+
+```{r}
+
+# Simulamos un proceso MA(1) con theta = -0,7
+# En la función arima.sim(), el signo del coeficiente está invertido
+simula_ma_2 <- arima.sim(list(ma = 0.7), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso MA(1) con coeficiente negativo.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ma_1) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso MA(1) con coeficiente negativo.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ma_2 <- ggAcf(simula_ma_2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ma_2 <- ggAcf(simula_ma_2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ma_2, pacf_simula_ma_2)
+
+```
+
+## Procesos AR(2)
+
+Los procesos AR(2) pueden escribirse como:
+
+$$y_t = \phi_1 y_{t-1} + \phi_2 y_{t-2} + \varepsilon_t$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+Para determinar si el proceso es estacionario, alcanza con verificar que todas las raíces del polinomio característico $1 - \phi_1 L - \phi_2 L^2$ sean mayores a la unidad en términos absolutos.
+
+En este caso, el autocorrelograma parcial mostrará que únicamente los primeros dos coeficientes son distintos de cero. Tal como sucedía con el resto de los procesos autorregresivos, si es estacionario, las autocorrelaciones simples deberían mostrar una caída exponencial.
+
+```{r}
+
+# Simulamos un proceso AR(2) con phi1 = 0,7 y phi2 = -0,5
+simula_ar2_1 <- arima.sim(n = 1500, list(ar = c(0.7, -0.5)))
+
+# Chequeamos estacionariedad
+# La función Mod() obtiene el valor absoluto y polyroot() las raíces del polinomio
+Mod(polyroot(c(1, -0.7, 0.5)))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso AR(2) con coeficientes -0,7 y 0,5.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar2_1) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso AR(2) con coeficientes 0,7 y -0,5.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar2_1 <- ggAcf(simula_ar2_1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar2_1 <- ggAcf(simula_ar2_1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar2_1, pacf_simula_ar2_1)
+
+```
+
+```{r}
+
+# Simulamos un proceso AR(2) con phi1 = -0,7 y phi2 = -0,5
+simula_ar2_2 <- arima.sim(n = 1500, list(ar = c(-0.7, -0.5)))
+
+# Chequeamos estacionariedad
+# La función Mod() obtiene el valor absoluto y polyroot() las raíces del polinomio
+Mod(polyroot(c(1, 0.7, 0.5)))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso AR(2) con coeficientes -0,7 y -0,5.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar2_2) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso AR(2) con coeficientes -0,7 y -0,5.", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar2_2 <- ggAcf(simula_ar2_2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar2_2 <- ggAcf(simula_ar2_2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar2_2, pacf_simula_ar2_2)
+
+```
+
+## Procesos ARMA(1,1)
+
+Los procesos ARMA contienen un componente autorregresivo y otro de medias móviles. En particular, un modelo ARMA(1,1) tiene la forma:
+
+$$y_t = \phi y_{t-1} + \varepsilon_t - \theta \varepsilon_{t-1}$$
+siendo $\varepsilon_t$ un Ruido Blanco.
+
+Para corroborar que el proceso sea estacionario, se debe verificar que el polinomio de su parte autorregresiva, $1 - \phi L$, tenga raíces mayores a uno en valor absoluto.
+
+```{r}
+
+# Simulamos un proceso ARMA(1,1) con phi = 0,5 y theta = -0,5
+simula_arma_1 <- arima.sim(list(ar = 0.5, ma = 0.5), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso ARMA(1,1) con coeficientes 0,5 y -0,5.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_arma_1) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso ARMA(1,1) con coeficientes 0,5 y -0,5.", fig.pos = 'H'}
+
+# FAC
+acf_simula_arma_1 <- ggAcf(simula_arma_1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_arma_1 <- ggAcf(simula_arma_1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_arma_1, pacf_simula_arma_1)
+
+```
+
+```{r}
+
+# Simulamos un proceso ARMA(1,1) con phi = -0,5 y theta = -0,5
+simula_arma_2 <- arima.sim(list(ar = -0.5, ma = 0.5), n = 1500)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de un proceso ARMA(1,1) con coeficientes -0,5 y -0,5.", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_arma_2) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para un proceso ARMA(1,1) con coeficientes -0,5 y -0,5.", fig.pos = 'H'}
+
+# FAC
+acf_simula_arma_2 <- ggAcf(simula_arma_2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_arma_2 <- ggAcf(simula_arma_2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_arma_2, pacf_simula_arma_2)
+
+```
+
+# ARMA(p,q) como MA de orden infinito
+
+Si un proceso ARMA(p,q) es estacionario, puede ser expresado como una combinación lineal de shocks infinitos, de forma que equivale a un proceso de medias móviles de orden infinito:
+
+$$y_t = \varepsilon_t + \psi_1 \varepsilon_{t-1} + \psi_2 \varepsilon_{t-2} + \ldots = (1 + \psi_1 L + \psi_2 L^2 + \ldots) \varepsilon_t = \Psi(L) \varepsilon_t$$
+Por otra parte, se tiene que:
+
+$$\Phi(L) y_t = \Theta(L) \varepsilon_t \Rightarrow y_t = \frac{\Theta(L)}{\Phi(L)} \varepsilon_t$$
+De esta manera, se concluye que:
+
+$$\frac{\Theta(L)}{\Phi(L)} = \Psi(L) \Rightarrow \Theta(L) = \Psi(L) \Phi(L) $$
+A partir de esta expresión, es posible despejar los valores del polinomio $\Psi(L)$ para cada proceso particular.
+
+```{r}
+
+# Expresamos un proceso AR(1) con phi = 0.8 como un MA(inf)
+ma_inf_1 <- ARMAtoMA(ar = 0.8, lag.max = 40)
+ma_inf_1 <- data.frame(Tiempo = 1:40, Coeficientes = ma_inf_1)
+head(ma_inf_1)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Primeros 40 coeficientes de la representación como un proceso MA de orden infinito de un proceso AR(1).", fig.pos = 'H'}
+
+# Graficamos los primeros 40 coeficientes del proceso expresado como un MA(inf)
+
+ggplot(ma_inf_1) +
+  geom_line(aes(x = Tiempo, y = Coeficientes))
+
+```
+
+```{r}
+
+# Expresamos un proceso AR(2) con phi1 = 0.7 y phi2 = -0,5 como un MA(inf)
+ma_inf_2 <- ARMAtoMA(ar = c(0.7, -0.5), lag.max = 40)
+ma_inf_2 <- data.frame(Tiempo = 1:40, Coeficientes = ma_inf_2)
+head(ma_inf_2)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Primeros 40 coeficientes de la representación como un proceso MA de orden infinito de un proceso AR(2).", fig.pos = 'H'}
+
+# Graficamos los primeros 40 coeficientes del proceso expresado como un MA(inf)
+
+ggplot(ma_inf_2) +
+  geom_line(aes(x = Tiempo, y = Coeficientes))
+
+```
+
+# Identificación de procesos con pocas observaciones
+
+## Procesos AR(1)
+
+```{r}
+
+# Simulamos un proceso AR(1) con phi = 0,7 y 50 observaciones
+simula_ar1_n50 <- arima.sim(list(ar = 0.7), n = 50)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de 50 observaciones para un proceso AR(1).", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar1_n50) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para 50 observaciones de un proceso AR(1).", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar1_n50 <- ggAcf(simula_ar1_n50, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar1_n50 <- ggAcf(simula_ar1_n50, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar1_n50, pacf_simula_ar1_n50)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial teóricas y estimadas para 50 observaciones de un proceso AR(1) con coeficiente positivo.", fig.pos = 'H'}
+
+# Obtenemos las autocorrelaciones teóricas
+ar1_n50_acf_teorico <- ARMAacf(ar = 0.7, lag.max = 14, pacf = FALSE)
+ar1_n50_pacf_teorico <- ARMAacf(ar = 0.7, lag.max = 14, pacf = TRUE)
+
+# Obtenemos las autocorrelaciones estimadas
+ar1_n50_acf_est <- ggAcf(simula_ar1_n50, plot = FALSE, lag.max = 14, type = "correlation")
+ar1_n50_pacf_est <- ggAcf(simula_ar1_n50, plot = FALSE, lag.max = 14, type = "partial")
+
+# Ordenamos los datos de la FAC para poder graficarlos
+ar1_n50_teorico_est_acf <- data.frame(rezago = 0:14, "Teórica" = ar1_n50_acf_teorico, "Estimación" = ar1_n50_acf_est$acf)
+ar1_n50_teorico_est_acf <- ar1_n50_teorico_est_acf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FAC teórica y estimada
+ar1_n50_acf <- ggplot(ar1_n50_teorico_est_acf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       fill = "FAC")
+
+# Ordenamos los datos de la FACP para poder graficarlos
+ar1_n50_teorico_est_pacf <- data.frame(rezago = 1:14, "Teórica" = ar1_n50_pacf_teorico, "Estimación" = ar1_n50_pacf_est$acf)
+ar1_n50_teorico_est_pacf <- ar1_n50_teorico_est_pacf %>% 
+  pivot_longer(cols = c("Teórica", "Estimación"), values_to = "valores")
+
+# Graficamos las FACP teórica y estimada
+ar1_n50_pacf <- ggplot(ar1_n50_teorico_est_pacf) +
+  geom_col(aes(x= rezago, y = valores, fill = name),
+           position = "dodge", width = 0.2) +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       fill = "FACP")
+
+grid.arrange(ar1_n50_acf, ar1_n50_pacf)
+
+```
+
+## Procesos MA(1)
+
+```{r}
+
+# Simulamos un proceso MA(1) con theta = 0,8 y 50 observaciones
+# En la función arima.sim(), el signo del coeficiente está invertido
+simula_ma_n50 <- arima.sim(list(ma = -0.8), n = 50)
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de 50 observaciones para un proceso MA(1).", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ma_n50) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para 50 observaciones de un proceso MA(1).", fig.pos = 'H'}
+
+# FAC
+acf_simula_ma_n50 <- ggAcf(simula_ma_n50, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ma_n50 <- ggAcf(simula_ma_n50, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ma_n50, pacf_simula_ma_n50)
+
+```
+
+## Procesos AR(2)
+
+```{r}
+
+# Simulamos 50 observaciones de un proceso AR(2) con phi1 = 0,7 y phi2 = -0,5
+simula_ar2_n50 <- arima.sim(n = 50, list(ar = c(0.7, -0.5)))
+
+# Chequeamos estacionariedad
+# La función Mod() obtiene el valor absoluto y polyroot() las raíces del polinomio
+Mod(polyroot(c(1, -0.7, 0.5)))
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Simulación de 50 observaciones de un proceso AR(2).", fig.pos = 'H'}
+
+# Graficamos el proceso
+autoplot(simula_ar2_n50) +
+  geom_hline(yintercept = 0, col = "red") +
+  labs(x = "Tiempo",
+       y = "Valor")
+
+```
+
+```{r, fig.align = 'center', fig.cap = "Funciones de Autocorrelación y Autocorrelación Parcial para 50 observaciones de un proceso AR(2).", fig.pos = 'H'}
+
+# FAC
+acf_simula_ar2_n50 <- ggAcf(simula_ar2_n50, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+pacf_simula_ar2_n50 <- ggAcf(simula_ar2_n50, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(acf_simula_ar2_n50, pacf_simula_ar2_n50)
+
+```
