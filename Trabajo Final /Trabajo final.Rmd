@@ -1,0 +1,86 @@
+---
+title: "Primer Trabajo"
+author: "Matías Bajac - Aris Sarkisian"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(patchwork)
+library(forecast)
+library(tsoutliers)
+library(gridExtra)
+```
+
+```{r}
+turismo <- read_excel("C:/Users/Administrador/Desktop/R/Series 2024/turismo.xlsx")
+turismo <- ts(turismo$Turismo,start = c(1990,1),end = c(2024, 3),frequency = 12)
+```
+
+
+```{r}
+autoplot(turismo) +
+labs(x = "Fecha",
+y = "Turismo brasilero") +
+theme(panel.grid.minor = element_blank())
+```
+```{r}
+ggmonthplot(turismo) +
+labs(x = "Mensual",
+y = "Turismo")
+```
+```{r}
+ggseasonplot(turismo) +
+labs(color = "Año",
+x = "Mes",
+y = "Turismo",
+title = "PIB (IVF) por año")
+```
+
+```{r}
+turismo_acf <- ggAcf(turismo, lag.max = 24, type = "correlation") +
+labs(x = "Rezago",
+y = "Autocorrelación",
+title = "")
+# FACP
+turismo_pacf <- ggAcf(turismo, lag.max = 24, type = "partial") +
+labs(x = "Rezago",
+y = "Autocorrelación parcial",
+title = "")
+grid.arrange(turismo_acf, turismo_pacf)
+```
+
+```{r}
+lturismo<-log(turismo)
+autoplot(lturismo) +
+labs(x = "Año",
+y = "Logaritmo del PIB") +
+theme(panel.grid.minor = element_blank())
+
+```
+
+```{r}
+lturismo_acf <- ggAcf(lturismo, lag.max = 24, type = "correlation") +
+labs(x = "Rezago",
+y = "Autocorrelación",
+title = "")
+# FACP
+lturismo_pacf <- ggAcf(lturismo, lag.max = 24, type = "partial") +
+labs(x = "Rezago",
+y = "Autocorrelación parcial",
+title = "")
+grid.arrange(lturismo_acf, lturismo_pacf)
+```
+```{r}
+d12lturismo <- diff(lturismo, lag = 12)
+autoplot(d12lturismo) +
+labs(x = "Año",
+y = "PIB diferenciado") +
+theme(panel.grid.minor = element_blank())
+
+```
+
