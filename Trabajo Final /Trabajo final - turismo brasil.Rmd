@@ -1,0 +1,749 @@
+---
+title: 'Trabajo final '
+author: "Matias Bajac - Aris Sarkisian"
+output:
+  pdf_document:
+    extra_dependencies: float
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center",
+  fig.pos = "H", out.extra = "", fig.height = 5, fig.width = 6,fig.path ='figures/'
+)
+```
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+library(readxl)
+library(tidyverse)
+library(patchwork)
+library(forecast)
+library(tsoutliers)
+library(gridExtra)
+library(lmtest)
+library(urca)
+library(lubridate)
+library(kableExtra)
+library(RJDemetra)
+library(here)
+```
+
+```{r,echo=FALSE,message=FALSE,results='hide'}
+#turismo <- read_excel("C:/Users/Administrador/Desktop/R/Series 2024/turismo.xlsx") 
+#IVF_PIB_1990_2023 <- read_excel("C:/Users/Administrador/Downloads/IVF_PIB_1990_2023.xlsx")
+#carnaval <- read_excel("C:/Users/Administrador/Downloads/carnaval.xlsx")
+
+turismo<- read_excel("datos/Series2.xlsx", 
+    sheet = "Turismo brasileros")
+carnaval <- read_excel("datos/Series3.xlsx", 
+    sheet = "Turismo brasileros")
+
+IVF_PIB_1990_2023 <- read_excel(here("datos/IVF_PIB_1990_2023.xlsx"))
+
+
+pib = IVF_PIB_1990_2023  %>%  
+  rename("Fecha" = `...1`,
+         "PIB" = IVF_PIB_UY_T) %>% 
+  select(Fecha, PIB, Turismo)
+turismo <- left_join(turismo, select(pib, Fecha, Turismo), by = "Fecha") %>%  rename("Turismo" = Turismo.x)
+
+
+ 
+turismo <- turismo %>%
+  mutate(Turismo.y = replace_na(Turismo.y, 0))
+
+
+turismo<- turismo %>%
+  mutate(Anio = year(Fecha), Mes = month(Fecha))
+
+turismo <- turismo %>%
+  group_by(Anio) %>%
+  mutate(Turismo.y = if_else(Mes == 4, Turismo.y + sum(if_else(Mes == 6, Turismo.y, 0)), Turismo.y),
+         Turismo.y = if_else(Mes == 6, 0, Turismo.y))  %>% ungroup() %>%  select(Fecha,Turismo,Turismo.y) 
+
+
+turismo$Turismo.y[411] = 7
+
+
+turismo = left_join(turismo,select(carnaval,Carnaval,Fecha), by= "Fecha")
+
+
+n <- nrow(turismo) 
+tur <- turismo$Turismo.y[1:n]
+car = turismo$Carnaval[1:n]
+
+turismo <- ts(turismo$Turismo,start = c(1990,1),end = c(2024, 3),frequency = 12)
+
+
+```
+
+# Metodologia 
+
+En ocasión del proyecto final del curso de Series Cronologicas, se propuso poner en práctica los conocimientos adquiridos durante el semestre y aplicarlos en una base de datos real. La cual constaba inicialmente con cantidad de turistas mensuales desde el año 1990 a marzo del 2024. Adicionalmente se creó 2 variables indicadoras  mas (turismo y carnval) la cual nos es de utilidad a la hora de estimar el modelo.  
+En primer instancia, se hara una exploración de datos para ver la evolución del turismo brasilero a lo largo del tiempo, como tambien se estudiara  como una primera aproximación mediante los graficos de autocorrelacion  si existe o no estacionariedad en la serie original, en cualquier caso, estos gráficos no resultan definitivos para determinar si el proceso es trend stationary o difference stationary
+ Luego se procede a realizar una transformacion logaritmica a la serie debido a que la varianza aumenta con la media de la serie. 
+El siguiente paso es realizar una diferencia estacional, para luego dar lugar  a la intervención de  outliers, en particular poner a suma atención en la pandemia del 2020, en el cual será  intervenido manualmente.
+Como algo adicional, se hizo un test de raices unitarias, en el cual fue de utildiad ya que  nos ayudo para agregar una constante y drift a los modelos estimados. 
+En principio  se presentan 2 modelos, uno solo con los datos atipicos, y el otro agregando  las variables de carnaval y turismo. Luego se crean otros 2 modelos, esta vez analizando  por un lado el efecto de la pandemia y los outliers, y finalmente agregando estos efectos a las variables carnaval y turismo. En todos los casos se hace el diagnostico de normalidad. 
+Finalmente se utilizan estos 2 ultimos modelos mencionado  para realizar predicciones a 12 pasos. 
+Por ultimo se hace la validacion de las predicciones.
+
+
+
+
+
+
+ 
+
+
+# Serie elegida
+
+Luego de contemplar distintas posibilidades, se determinó que la serie a utilizar sería la referida al turismo en Uruguay, específicamente el proveniente de Brasil. Esta es una serie mensual que contabiliza los visitantes ingresados a Uruguay, diferenciando según nacionalidad, que se encuentra disponible para el público por cortesía del Ministerio de Turismo. La serie inicia en enero del 1990 y tiene datos hasta marzo de 2024, lo que otorga un total de 411 observaciones para trabajar.
+
+Para familiarizarse con la serie, se presentan unos pocos elementos que ayudarán a comprender el comportamiento que ha evidenciado el turismo receptivo durante este período.
+
+En el primer gráfico, se presenta la evolución de los valores en el tiempo. Se puede ver que continuamente sube y baja, lo que se debe al comportamiento estacional del turismo, que hay una tendencia al alta en la cantidad total de turismo, en todas las estaciones,y sobre todo, resalta el efecto completamente negativo de la pandemia en el turismo, llegando a valores cercanos a 0, y tardando unos años en volver a los valores anteriores. 
+En el segundo gráfico se estudia el comportamiento estacional del turismo. Considerando que el mayor atractivo turístico del Uruguay son las playas y los balnearios en general, tiene todo el sentido del mundo que en promedio los meses con mayor cantidad de turistas sean los asociados con el verano. El otro valor alto es julio, que coincide con las vacaciones de Julio, en la que mucha gente aprovecha para viajar, aún sin las mejores temperaturas. 
+
+```{r,fig.cap="Evolución del turismo mensual proveniente de Brasil entre 1990 y 2024",echo=FALSE}
+autoplot(turismo) +
+labs(x = "Fecha",
+y = "Turismo brasilero") +
+theme(panel.grid.minor = element_blank())
+```
+
+```{r,fig.cap="Comportamiento mensual del turismo proveniente  de Brasil entre 1990 y 2024",echo=FALSE}
+ggmonthplot(turismo) +
+labs(x = "Mes",
+y = "Turismo brasilero")
+```
+
+
+# Identificación del modelo
+
+Para tener la capacidad de elegir el mejor modelo posible, es necesaria llevar a cabo una etapa de trabajar con la serie, hasta encontrar alguna operación que lleve a pensar que la serie pueda ser estacionaria.
+
+## sin hacer nada
+
+En primer lugar se analiza la serie original, para estudiar si la serie es estacionaria o no. Y, al analizar, el FAC, se llega rápidamente a la conclusión de que la serie no es estacionaria, veindo que los residuos están muy correlacionados entre si.
+
+```{r,echo=FALSE,fig.cap="Funciones de Autocorrelacion y Autocorrelación parcial estimadas del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+turismo_acf <- ggAcf(turismo, lag.max = 24, type = "correlation") +
+labs(x = "Rezago",
+y = "Autocorrelación",
+title = "")
+# FACP
+turismo_pacf <- ggAcf(turismo, lag.max = 24, type = "partial") +
+labs(x = "Rezago",
+y = "Autocorrelación parcial",
+title = "")
+grid.arrange(turismo_acf, turismo_pacf)
+```
+
+## Logaritmo
+
+La serie original presenta una varianza ascensiediente en el tiempo, siendo que cada había más distancia entre los meses con mayor cantidad de turistas brasileros y lo que contaban con menos. Entonces, se propone una transformación logarítmica, para ver si ayuda a estabilizar la varianza. Viendo la evolución de la serie, se podría decir que se logró reducir la varianza. De igual manera,  analizando los FAC Y FACP, el proceso sigue sin ser estacionario.
+
+
+```{r,echo=FALSE,fig.cap="Evolución del logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+lturismo<-log(turismo)
+autoplot(lturismo) +
+labs(x = "Año",
+y = "Logaritmo del PIB") +
+theme(panel.grid.minor = element_blank())
+
+```
+
+
+```{r,fig.cap="Funciones de Autocorrelacion y Autocorrelación parcial estimadas del logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024",echo=FALSE}
+lturismo_acf <- ggAcf(lturismo, lag.max = 24, type = "correlation") +
+labs(x = "Rezago",
+y = "Autocorrelación",
+title = "")
+# FACP
+lturismo_pacf <- ggAcf(lturismo, lag.max = 24, type = "partial") +
+labs(x = "Rezago",
+y = "Autocorrelación parcial",
+title = "")
+grid.arrange(lturismo_acf, lturismo_pacf)
+```
+
+## Primera diferencia estacional
+
+Ya había quedado establecido en la sección de exploración que el proceso contiene un fuerte componente estacional. Entonces, se procede a incorporar esta información al modelo propuesto. Pudiendo observar los gráficos propuestos, dejando de lado el efecto de la pandemia, la serie comienza a aparecerse a algo estacionario. Pasando a estudiar los resultados a los que se llega con los FAC Y FACP, la serie parece tener un predominio de la parte MA, indicando la parte estacionaria en la FACP, que desciende casi instantaneamente, y teniendo una FAC que converge asintoticamente a 0.
+
+```{r,echo=FALSE,fig.cap="Evoución de la primera diferencia estacional del logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+d12lturismo <- diff(lturismo, lag = 12)
+autoplot(d12lturismo) +
+labs(x = "Año",
+y = "Turismo brasilero diferenciado") +
+theme(panel.grid.minor = element_blank())
+
+```
+
+```{r,fig.cap="Funciones de Autocorrelacion y Autocorrelación parcial estimadas de la primera diferencia estacional del logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024",echo=FALSE}
+d12lturismo_acf <- ggAcf(d12lturismo, lag.max = 24, type = "correlation") +
+labs(x = "Rezago",
+y = "Autocorrelación",
+title = "")
+# FACP
+d12lturismo_pacf <- ggAcf(d12lturismo, lag.max = 24, type = "partial") +
+labs(x = "Rezago",
+y = "Autocorrelación parcial",
+title = "")
+grid.arrange(d12lturismo_acf, d12lturismo_pacf)
+```
+
+## Detección outliers
+
+Entendiendo que la detección de outliers generalmente es un paso que se presenta más adelante en el proceso de construcción del modelo, la presencia de un valor tan fuertemente atípico como la pandemia lleva a pensar que en realidad ningún modelo va a funcionar de gran manera si no se le avisa de antemano de la necesaria intervención de este conjunto de valores. El modelo elegido para encontrar esos outliers es meramente provisional con el único objetivo de detectar estos outliers, bajo el supuesto de que cualquier modelo razonablemente bueno logrará capturar el efecto de la pandemia.En este caso, además detectó otros outliers que no tienen nada que ver con l pandemia. Llegado el momento de realizar el modelo final, en caso de que no sean significativas estas intervenciones, simplemente se quitan. 
+
+```{r,echo=FALSE,fig.cap="deteccion de outliers"}
+outliers1 <- tso(lturismo, tsmethod = "arima",
+                 args.tsmethod = list(order = c(1, 1, 0),
+                                      seasonal = list(order = c(0, 1, 1))))
+outliers1$outliers
+
+# Graficamos el efecto de los outliers
+plot.tsoutliers(outliers1)
+
+xreg1 <- outliers.effects(outliers1$outliers, length(lturismo))
+```
+
+## Raíces unitarias
+
+A continuación nos valeremos de los contrastes de raíz unitaria para analizar si es necesario agregar componentes a nuestro modelo, o, de lo contrario, ya se cuenta con un proceso estacionario, al haber realizado las modificaciones de contener una diferencia estacional y encontrarse en logaritmos 
+
+En primer lugar se analiza si es necesario agregar alguna diferencia regular, utilizando el test de Dickey-Fuller aumentado. El resultado determina que no necesaria utilizar ninguna diferencia regular a la serie de tiempo con la que se está trabajando.
+
+```{r}
+ndiffs(lturismo, test = "adf", type = "level")
+ndiffs(lturismo, test = "adf", type = "trend")
+```
+
+El siguiente paso es analizar si la serie cuenta con un comportamiento tendencial o si es necesario agregar una constante. Para llevar a cabo este analisis se vuelve a realizar el test de raíz unitaria de Dickey-Fuller aumentado. El mensaje que otorga la función utlizada no es muy estetica, por lo que se elige mostar una tabla con los valores hallados para los distintos contrastes. El valor de "tau3" se omite porque ya se descartó en la parte anterior la presencia de una diferencia regular. 
+
+La forma de leer estos números es la siguiente:  si el valor del estadístico calculado en el contraste es mayor al respectivo valor crítico al 5%, entonces se rechaza la hipotesis nula correspondiente. Teniendo esto en mente, el estadístico calculado en el primer contraste es mayor al valor crítico, por lo que se rechaza, y se determina que es necesario agregarle una tendencia al modelo. Y en el segundo contraste, el estadístico también es mayor al valor crítico, entonces se rechaza,  y se determina que necesario agregarle una constante al modelo.
+
+```{r,results='hide',echo=FALSE}
+lpib_ct <- ur.df(d12lturismo, type = 'trend', selectlags = "BIC")
+
+summary(lpib_ct)
+```
+
+```{r,echo=FALSE}
+
+df = data.frame("Hola"=c("Estadístico","Valor crítico"),"phi2"=c(6.84,4.71),"phi3"=c(10.26,6.3))
+colnames(df) = c("", "phi2","phi3")
+
+df %>%  kable() %>%  kable_styling( font_size=9, full_width=FALSE, latex_options = "HOLD_position") %>%  kable_classic_2()
+
+```
+
+# Estimacion del modelo
+
+Para recapitular, tenemos evidencia que nos sugiere que el modelo a definir debe contener una diferencia estacionaria, ninguna diferencia regular, debe incluir constante,debe incluir un drift, conviene hacer la transformación logarítmica, debe incluir la intervención con los valores atípicos,y además va a tener coeficientes principalmente de la parte MA. 
+
+También es importante mencionar que se cuenta con información sobre la fecha en la que cayó carnaval y semana de turismo en el período en el que se está trabajando, y parece razonable pensar que la presencia o ausencia de estos feriados en un mes en  específico tiene un efecto considerable en la cantidad de turistas. Así que se integra al modelo esta información en la modalidad de variables indicadoras, esperando ver que sean significativas.
+
+Se trabajará con 2 modelos, uno que incluya semana de turismo y carnaval, y otro que no los incluya. De esta manera se podrá controlar el efecto de estas variables de intervención.
+
+A partir de esto, se pueden intentar diferentes alternativas y combinaciones de parametros. Luego de haber llevado a cabo la estimación para las variadas posibilidades, se determinó que el modelo que llevaba a las mejores propiedades es el SARIMA(1,0,2)(0,1,1), aunque también requirió algo de trabajo extra para pulir los resultados obtenidos.
+
+El primer comentario que se debe hacer es que todos los coeficientes de los dos modelo son significativos con un nivel de confianza del 95%, lo que es algo muy bueno.
+
+```{r}
+#SARIMA (1,0,2)(0,1,1) con constante,drift, carnaval y turismo
+modelo1<-Arima(y=turismo,order=c(1,0,2),seasonal = c(0,1,1),xreg=cbind(xreg1,tur,car),lambda = 0,method ="ML",biasadj=TRUE,include.drift = TRUE,include.constant = TRUE)
+coeftest(modelo1)
+
+
+```
+
+```{r}
+#SARIMA (1,0,2)(0,1,1) con constante y drift
+modelo1.1<-Arima(y=turismo,order=c(1,0,2),seasonal = c(0,1,1),xreg=xreg1,lambda = 0,method ="ML",biasadj=TRUE,include.drift = TRUE,include.constant = TRUE)
+coeftest(modelo1.1)
+```
+
+## Analisis residuos
+
+A la hora de llevar a cabo el diágnostico del modelo, surgieron resultados favorables, como la falta de correlación de los residuos para cualquier rezago, pero también se evidenció un gran problema, la falta de normalidad de los residuos, que lleva a no poder garantizar que la incorrelación implique independencia.
+
+```{r}
+residuos1<-modelo1$residuals
+residuos1sd<-residuos1/sqrt(modelo1$sigma2)
+
+shapiro.test(residuos1)
+tseries::jarque.bera.test(residuos1)
+Box.test(residuos1,lag = 25, type = "Ljung-Box")
+```
+
+```{r}
+residuos1.1<-modelo1.1$residuals
+residuos1.1sd<-residuos1.1/sqrt(modelo1.1$sigma2)
+
+shapiro.test(residuos1.1)
+tseries::jarque.bera.test(residuos1.1)
+Box.test(residuos1.1,lag = 25, type = "Ljung-Box")
+```
+Una posible estrategia para intentar solucionar la falta de normalidad de los residuos es estudiar la presencia de valores atípicos, por lo que se propuso estudiar si hay algún residuo que sea mayor al resto y pueda estar distorsionando los resultados. Se puede ver en el gráfico como el residuo del inicio de la pandemia es excesivamente grande, por lo que se decide intervenir manualmente el modelo en ese punto
+
+```{r,echo=FALSE,fig.cap="Residuos de un modelo SARIMA(0,1,2)(0,1,1) para el logaritmo del turismo mensual brasilero,incluyendo semana de turismo y carnaval"}
+residuos1sd %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+```
+
+```{r}
+time(residuos1sd)[which.max(abs(residuos1sd))]
+
+AO<-rep(0,length(turismo))
+AO[363]=1
+```
+
+
+# Reestimación Modelo 
+
+Se vuelven a correr los mismos modelos, pero esta vez con la nueva variable de intervención creada, que intentará corregir la falta de normalidad en los residuos.
+
+En ambos casos todos los parametros siguen siendo significativos,incluidos la nueva intervención agregada, por lo que puede ser de esperar al menos mejorra los resultados anteriores
+
+## Modelo 2 con carnaval y semana de turismo
+
+```{r}
+#SARIMA (1,0,2)(0,1,1) con constante ,drift e intervenido manualmente
+modelo2<-Arima(y=turismo,order=c(1,0,2),seasonal = c(0,1,1),include.constant = TRUE,include.drift = TRUE,xreg=cbind(xreg1,AO,tur,car),lambda = 0,method ="ML",biasadj=TRUE)
+coeftest(modelo2)
+```
+## Modelo 2.1 sin carnaval y semana de turismo
+
+```{r}
+#SARIMA (1,0,2)(0,1,1) con constante ,drift e intervenido manualmente
+modelo2.1<-Arima(y=turismo,order=c(1,0,2),seasonal = c(0,1,1),include.constant = TRUE,include.drift = TRUE,xreg=cbind(xreg1,AO),lambda = 0,method ="ML",biasadj=TRUE)
+coeftest(modelo2.1)
+```
+
+# Diagnostico del modelo
+
+## Analisis grafico residuos 
+
+Ya no hay presencia de residuos excesivamente grande. Se podría intervenir alguno más que cruza por poco el umbral de los tres desvíos, pero veremos los resultados de los demás tests antes de tomar la desición de realizar otra intervención. Mirando  las FAC y FACP,sucede algo raro en los residuos 9 y 17, pero a falta de una razón aparente que podría explicar esto, no se toma mayor acción al respecto
+
+```{r,echo=FALSE,fig.cap="Residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual brasilero,incluyendo semana de turismo y carnaval"}
+residuos2<-modelo2$residuals
+residuos2sd<-residuos2/sqrt(modelo2$sigma2)
+
+residuos2sd %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+```
+
+```{r,echo=FALSE,fig.cap="Funciones de Autocorrelacion y Autocorrelación parcial estimadas de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024,incluyendo semana de turismo y carnaval"}
+residuos2_acf <- ggAcf(residuos2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos2_pacf <- ggAcf(residuos2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos2_acf, residuos2_pacf)
+```
+
+```{r,fig.cap="Residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual brasilero",echo=FALSE}
+residuos2.1<-modelo2.1$residuals
+residuos2.1sd<-residuos2.1/sqrt(modelo2.1$sigma2)
+
+residuos2.1sd %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted") + 
+  theme()
+```
+
+```{r,echo=FALSE,,fig.cap="Funciones de Autocorrelacion y Autocorrelación parcial estimadas de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+
+residuos2.1_acf <- ggAcf(residuos2.1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+residuos2.1_pacf <- ggAcf(residuos2.1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(residuos2.1_acf, residuos2.1_pacf)
+```
+
+
+
+
+## contraste autocorrelacion de los residuos 
+
+Más allá del anaálisi gráfico, se realiza el contraste de Ljung-Box para evaluar la incorrelación de los residuos. El objetivo del contraste es no rechazar. Entonces, se puede confirmar que ninguno de los modelos presenta correlación entre los residuos,pero, además, se puede decir que el modelo que incluye a semana de turismo y carnaval rechaza con más márgen la hipotesis nula, por lo que hay todavía más evidencias para canfirmar la falta de correlación
+
+```{r}
+Box.test(residuos2,lag = 25, type = "Ljung-Box")
+```
+
+
+```{r}
+Box.test(residuos2.1,lag = 25, type = "Ljung-Box")
+```
+
+## normalidad para el modelo 2 
+
+Para estudiar la normalidad, en primer lugar se presentan dos opciones gráficas que permiten detectar de algún comportamiento inesperado o simplemente ver que se comporta correctamente. 
+
+Ambos modelos presentan un comportamiento similar, y hay razones para pensar que esta vez sí los residuos se distribuyen de manera normal. 
+
+```{r,echo=FALSE,fig.cap="QQ-plot de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024,incluyendo semana de turismo y carnaval"}
+ggplot(residuos2, aes(sample = residuos2)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+```
+
+```{r,echo=FALSE,fig.cap="Histograma de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024,incluyendo semana de turismo y carnaval"}
+ggplot(data = residuos2) +
+  geom_histogram(aes(x = residuos2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos2),
+                            sd = sd(residuos2)),
+                col = "red",
+                linewidth = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+```
+
+
+```{r,echo=FALSE,fig.cap="QQ-plot de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+ggplot(residuos2.1, aes(sample = residuos2.1)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red") +
+  labs(x = "Cuantiles teóricos",
+       y = "Cuantiles de la muestra")
+```
+
+```{r,echo=FALSE,fig.cap="Histogramas de los residuos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+ggplot(data = residuos2.1) +
+  geom_histogram(aes(x = residuos2.1,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos2),
+                            sd = sd(residuos2)),
+                col = "red",
+                linewidth = 1) +
+  labs(x = "Residuos",
+       y = "Densidad")
+```
+
+
+
+## contraste normalidad  
+
+Para confirmar si se está en presencia de normalidad en los residuos, se llevan a cabo dos tests que evalúan la normalidad. Estos son el test de Shapiro-Wilk y el test de Jarque-Bera, y en ambos el objetivo es no rechazar. 
+
+Viendo los resultados, es impresionante como una simple intervención en una observaciones pudo haber cambiado tanto, siendo que ahora todos los tests llevan a rechazar, y con un interesante márgen.
+
+```{r}
+shapiro.test(residuos2)
+tseries::jarque.bera.test(residuos2)
+```
+
+
+```{r}
+shapiro.test(residuos2.1)
+tseries::jarque.bera.test(residuos2.1)
+```
+
+
+
+# Predicción
+
+Una importante propiedad que tiene que presentar un modelo es la capacidad de predecir con precisión. Al no contar con datos para más adelante en el tiempo, se realiza la predicción sin realmente saber si será buena o no. De cualquier manera, en ambos modelos se realizará una predicción 12 meses hacia adelante.
+
+```{r,echo=FALSE}
+h<-12
+
+AO2<-rep(0,length(turismo)+h)
+AO2[363]=1
+#AO2[254]=1
+
+tur2<-c(tur,rep(0,h))
+#año que viene es en abril asi que es todo 0
+
+car2<-c(car,rep(0,h))
+#año que viene es en marzo asi que es todo 0
+
+newxreg1 <- outliers.effects(outliers1$outliers, length(turismo) + h)
+newxreg1 <- newxreg1[(length(turismo) + 1):(length(turismo) + h),]
+```
+
+## Modelo 2
+
+```{r,echo=FALSE,warning=FALSE,fig.cap="Predicciones a 12 pasos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024,incluyendo semana de turismo y carnaval"}
+predicciones2 <- forecast(modelo2, h = h, xreg =cbind(newxreg1,AO2[412:423],tur2[412:423],car2[412:423]),fan = TRUE,  biasadj = TRUE)
+
+predicciones2
+
+autoplot(predicciones2) +
+  labs(x = "Fecha",
+       y = "Turismo brasilero",
+       title = "")
+```
+
+## Modelo 2.1
+
+```{r,echo=FALSE,warning=FALSE,fig.cap="Predicciones a 12 pasos de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+predicciones2.1_aj <- forecast(modelo2.1, h = h, 
+                          xreg = cbind(newxreg1,AO2[412:423]),fan = TRUE,
+                          biasadj = TRUE)
+
+autoplot(predicciones2.1_aj) + autolayer(predicciones2.1_aj$mean, color = "red")
+  labs(x = "Fecha",
+       y = "Turismo brasilero",
+       title = "")
+
+
+```
+
+# Validacion de las predicciones
+
+Una mejor forma de evaluar las predicciones es realizarla en puntos donde si se conoce el valor real que va a tomar. La forma de llevar esto a cabo es mediante una muestra de entrenamiento y una muestra de testeo. Esto significa que se utilizará una parte de la muestra para estimar el modelo, y se realiza a la predicción en la parte que no formó parte de la estimación. De esta manera se asegura no sufrir sobreajuste, que es cuando la predicción está sesgada por predecir en los mismos valores que se utilizaron para la estimación.
+
+En este caso se utilizará los últimos dos años que contienen los datos para testear las predicciones.
+
+## Modelo 2
+
+```{r,echo=FALSE}
+train1 <- window(turismo, end = c(2022, 4))
+train1_reg <- cbind(AO[1:length(train1)],
+                    xreg1[1:length(train1),],tur[1:length(train1)],car[1:length(train1)])
+
+# Dejamos las observaciones del 2023 como conjunto de entrenamiento ("test set")
+test1 <- window(turismo, start = c(2022, 5))
+n1 <- length(test1)
+```
+
+```{r,echo=FALSE}
+modelo1_train <- Arima(y = train1,order=c(1,0,2),seasonal = c(0,1,1),include.constant = TRUE,include.drift = TRUE,xreg=train1_reg,lambda = 0,method ="ML",biasadj=TRUE)
+```
+
+```{r,echo=FALSE}
+test1_reg <- cbind(AO[(length(train1) + 1):nrow(xreg1)],
+                   xreg1[(length(train1) + 1):nrow(xreg1),],tur[(length(train1)+1):nrow(xreg1)],car[(length(train1)+1):nrow(xreg1)])
+
+pred_test1 <- forecast(modelo1_train,
+                       h = n1,
+                       xreg = test1_reg,
+                       biasadj = TRUE)
+```
+
+```{r,echo=FALSE,fig.cap="Predicciones en el conjunto de prueba de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024,incluyendo semana de turismo y carnaval"}
+autoplot(pred_test1) +
+  autolayer(turismo, color = "black") +
+  labs(x = "Fecha",
+       y = "Turismo brasilero",
+       title = "")
+```
+
+## Modelo 2.1
+
+```{r,echo=FALSE}
+train2 <- window(turismo, end = c(2022, 4))
+train2_reg <- cbind(AO[1:length(train1)],
+                    xreg1[1:length(train1)])
+
+# Dejamos las observaciones del 2023 como conjunto de entrenamiento ("test set")
+test2 <- window(turismo, start = c(2022, 5))
+n2 <- length(test2)
+```
+
+```{r,echo=FALSE}
+modelo2_train <- Arima(y = train2,order=c(1,0,2),seasonal = c(0,1,1),include.constant = TRUE,include.drift = TRUE,xreg=train2_reg,lambda = 0,method ="ML",biasadj=TRUE)
+```
+
+```{r,echo=FALSE}
+test2_reg <- cbind(AO[(length(train2) + 1):nrow(xreg1)],
+                   xreg1[(length(train2) + 1):nrow(xreg1)])
+
+pred_test2 <- forecast(modelo2_train,
+                       h = n2,
+                       xreg = test2_reg,
+                       biasadj = TRUE)
+```
+
+```{r,echo=FALSE,fig.cap="Predicciones en el conjunto de prueba de un modelo SARIMA(1,0,2)(0,1,1) para el logaritmo del turismo mensual proveniente  de Brasil entre 1990 y 2024"}
+autoplot(pred_test2) +
+  autolayer(turismo, color = "black") +
+  labs(x = "Fecha",
+       y = "Turismo Brasilero",
+       title = "")
+```
+## Comparación
+
+Al comparar el desempeño predictivo de cada uno de los modelos, se nota claramente que el modelo que incluye a semana de turismo y carnaval obtuvo mucho mejores resultados, y esto en realidad era lo que esperaba. Si se incluya más información relevante al modelo, uno esperaría que termine obteniendo un mejor modelo.
+
+```{r}
+accuracy(pred_test1, test1)
+accuracy(pred_test2, test2)
+```
+
+
+# Interpretación y conclusiones
+
+Luego de ir probando distintos modelos, podemos llegar a la conclusión de que el modelo que hace que la serie sea tendencialmente estacionaria  (TS)  y supera el supesto  de normalidad  es el modelo que contiene  un drift, una  constante, y ademas a los outliers ,la intervencion de la  pandemia (AO)  y  las variables de carnaval y turismo. 
+Al realizar la prediccion a 12 pasos, podemos ver que que a un 95% de confianza, la estimacion a un punto es buena. 
+
+
+n base a los resultados hallados respecto al cumplimiento de todos los diágnosticos, la significación de todos los parametros, y el haber conseguido una buena precisión a la hora de predecir, sentimos que estamos en condiciones de asegurar que el modelo llevado a cabo,no solo es válido,sino que también es útil. De esta manera podemos concluir que la cantidad de turistas provenientes de Brasil depende de: la cantidad de turistas del mes anterior, de los errores producidos en los dos meses anteriores,de la cantidad de turistas del mismo mes del año anterior, y del error producido en ese mismo momento. Pero más allá de eso, se logró detectar que, independientemente de todos esos valores, hay un piso de turistas brasileros que vendrán al país cada mes, indicado por la constante, y, además, hay una tendencia al alza en la cantidad total, por lo que crecimiento será de mayor magnitud que la esperada solo por el efecto de los períodos que inciden en el momento de análisis.
+
+
+
+#### Anexo 
+Se agrega el tema de descomposicion visto al final de curso  con el fin de estudiar los componentes no observables de tendencias , ciclos y estacionalidad  para  validar los resultados alcanzados. 
+
+## Descomposicion
+
+### Adicional: Tendencia-ciclo, estacionalidad y componente irregular
+
+
+El objetivo es estudiar los componentes no observables mediante la metodologia X13. La función x13_spec de la libreria RJDemetra tiene incorporado el efecto calendario como también detecta automaticamente los outliers como los AO.
+En el tercer gráfico podemos confirmar  una clara estacionalidad en la serie como ya fue estudiado analizado anteriormente.
+Por ultimo estamos interesados en la prediccion  de  los componentes no observables 3 años hacia adelante (hasta marzo del 2027). 
+
+```{r,echo=TRUE}
+
+
+spec_x13 <- x13_spec(spec = "RSA5c", x11.fcasts = -3,easter.duration = 7,transform.function	= "Log",
+
+                      outlier.enabled =  TRUE, outlier.ao = TRUE) ## tiene en cuenta turismo pero no carnaval
+
+                   
+                     
+
+
+# Descomposición X13
+modelo_x13_turismo <- x13(turismo, spec = spec_x13)
+
+summary(modelo_x13_turismo$regarima)
+
+
+```
+
+
+
+
+```{r}
+
+
+
+desc_x13 <- modelo_x13_turismo$final$series
+desc_x13_df <- data.frame(Fecha = seq(from = as.Date("1990-01-01"),
+                                      to = as.Date("2024-03-01"),
+
+
+                                      by = "month"),
+                          y = desc_x13[,1],
+                          sa = desc_x13[,2],
+                          t = desc_x13[,3],
+                          s = desc_x13[,4],
+                          i = desc_x13[,5]) %>% 
+  pivot_longer(cols = c(y, sa, t, s, i),
+               names_to = "Serie",
+               values_to = "Valor")
+
+componentes1 <- desc_x13_df %>% 
+  filter(Serie %in% c("y", "sa", "t")) %>% 
+  ggplot() +
+  geom_line(aes(x = Fecha,
+                y = Valor,
+                color = Serie))
+
+componentes2 <- desc_x13_df %>% 
+  filter(Serie %in% c("sa", "t")) %>% 
+  ggplot() +
+  geom_line(aes(x = Fecha,
+                y = Valor,
+                color = Serie))
+
+grid.arrange(componentes1, componentes2)
+```
+```{r}
+estacional_x13 <- desc_x13_df %>% 
+  filter(Serie %in% c("s")) %>% 
+  ggplot() +
+  geom_line(aes(x = Fecha,
+                y = Valor)) +
+  labs(title = "Componente estacional")
+
+irregular_x13 <- desc_x13_df %>% 
+  filter(Serie %in% c("i")) %>% 
+  ggplot() +
+  geom_line(aes(x = Fecha,
+                y = Valor)) +
+  labs(title = "Componente irregular")
+
+grid.arrange(estacional_x13, irregular_x13)
+```
+
+
+## Predicciones 
+
+```{r}
+# Predicciones puntuales de cada componente
+desc_x13_pred <-  modelo_x13_turismo$final$forecasts
+desc_x13_pred
+
+# Graficamos las predicciones
+
+# Serie original
+serie <- desc_x13[,1]
+pred_serie <- desc_x13_pred[,1]
+grafico_pred_serie <- autoplot(serie) +
+  autolayer(pred_serie, show.legend = FALSE) +
+  labs(x = "Fecha",
+       y = "Turismo",
+       title = "Serie original")
+
+# Serie desestacionalizada
+desest <- desc_x13[,2]
+pred_desest <- desc_x13_pred[,2]
+grafico_pred_desest <- autoplot(desest) +
+  autolayer(pred_desest, show.legend = FALSE) +
+  labs(x = "Fecha",
+       y = "Turismo",
+       title = "Serie desestacionalizada")
+
+# Tendencia
+tendencia <- desc_x13[,3]
+pred_tendencia <- desc_x13_pred[,3]
+grafico_pred_tendencia <- autoplot(tendencia) +
+  autolayer(pred_tendencia, show.legend = FALSE) +
+  labs(x = "Fecha",
+       y = "Turismo",
+       title = "Tendencia")
+
+grid.arrange(grafico_pred_serie, grafico_pred_desest, grafico_pred_tendencia)
+```
+
