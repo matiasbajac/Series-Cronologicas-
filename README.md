@@ -5,4 +5,4 @@ Responsabe del curso: Silvia Rodriguez
 
 # Prácticos en R
 
-[Taller Modelos AR,MA,ARMA](#)
+[Taller 1 - Modelos AR,MA,ARMA](#)
