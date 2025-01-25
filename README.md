@@ -5,5 +5,6 @@ Responsabe del curso: Silvia Rodriguez
 
 # Prácticos en R
 
-[Taller 1 - Modelos AR,MA,ARMA](#) //
-[Taler 2- Prediccion](#)
+[Taller 1 - Modelos AR,MA,ARMA](#) /
+
+[Taller 2- Prediccion](#)
